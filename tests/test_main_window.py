@@ -1,13 +1,13 @@
+from PySide6.QtWidgets import QLabel
+
 from email_order_reader.models import OrderRow, ScanResult
-from email_order_reader.ui.main_window import MainWindow
+from email_order_reader.ui.main_window import DEFAULT_IMAP_PORT, DEFAULT_IMAP_SERVER, MainWindow
 
 
-def test_settings_collapse_after_required_fields_are_filled(qtbot):
+def test_settings_collapse_after_email_and_auth_code_are_filled(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    window.server_input.setText("imap.example.com")
-    window.port_input.setText("993")
     window.email_input.setText("buyer@example.com")
     window.auth_code_input.setText("secret")
 
@@ -20,14 +20,37 @@ def test_edit_settings_expands_inputs(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    window.server_input.setText("imap.example.com")
-    window.port_input.setText("993")
     window.email_input.setText("buyer@example.com")
     window.auth_code_input.setText("secret")
     window.edit_settings_button.click()
 
     assert not window.settings_panel.isHidden()
     assert window.summary_panel.isHidden()
+
+
+def test_imap_server_and_port_are_hidden_enterprise_wechat_defaults(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    visible_labels = [label.text() for label in window.findChildren(QLabel) if not label.isHidden()]
+
+    assert "IMAP服务器" not in visible_labels
+    assert "端口" not in visible_labels
+
+
+def test_build_config_uses_enterprise_wechat_defaults(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.email_input.setText("buyer@example.com")
+    window.auth_code_input.setText("secret")
+    config = window.build_config()
+
+    assert config is not None
+    assert config.server == DEFAULT_IMAP_SERVER
+    assert config.port == DEFAULT_IMAP_PORT
+    assert config.email == "buyer@example.com"
+    assert config.auth_code == "secret"
 
 
 def test_hidden_alias_controls_build_session_aliases(qtbot):

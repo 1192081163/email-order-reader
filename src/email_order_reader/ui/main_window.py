@@ -22,6 +22,10 @@ from email_order_reader.models import ColumnAliases, ImapConfig, ScanResult
 from email_order_reader.scan_service import OrderScanService
 
 
+DEFAULT_IMAP_SERVER = "imap.exmail.qq.com"
+DEFAULT_IMAP_PORT = 993
+
+
 class ScanWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
@@ -54,8 +58,6 @@ class MainWindow(QMainWindow):
 
         self.settings_panel = QWidget()
         settings_layout = QFormLayout(self.settings_panel)
-        self.server_input = QLineEdit()
-        self.port_input = QLineEdit("993")
         self.email_input = QLineEdit()
         self.auth_code_input = QLineEdit()
         self.auth_code_input.setEchoMode(QLineEdit.Password)
@@ -71,8 +73,6 @@ class MainWindow(QMainWindow):
         advanced_layout.addRow("截至时间别名", self.deadline_alias_input)
         self.advanced_panel.hide()
 
-        settings_layout.addRow("IMAP服务器", self.server_input)
-        settings_layout.addRow("端口", self.port_input)
         settings_layout.addRow("邮箱", self.email_input)
         settings_layout.addRow("授权码", self.auth_code_input)
         settings_layout.addRow(self.advanced_toggle_button)
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
         self.root_layout.addWidget(self.table)
         self.root_layout.addWidget(self.status_label)
 
-        for input_widget in (self.server_input, self.port_input, self.email_input, self.auth_code_input):
+        for input_widget in (self.email_input, self.auth_code_input):
             input_widget.textChanged.connect(self.update_settings_visibility)
         self.advanced_toggle_button.clicked.connect(self.toggle_advanced_panel)
         self.edit_settings_button.clicked.connect(self.expand_settings)
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
     def required_fields_present(self) -> bool:
         return all(
             field.text().strip()
-            for field in (self.server_input, self.port_input, self.email_input, self.auth_code_input)
+            for field in (self.email_input, self.auth_code_input)
         )
 
     def update_settings_visibility(self) -> None:
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
             self.collapse_settings()
 
     def collapse_settings(self) -> None:
-        self.summary_label.setText(f"{self.email_input.text().strip()} / {self.server_input.text().strip()}")
+        self.summary_label.setText(self.email_input.text().strip())
         self.settings_panel.hide()
         self.summary_panel.show()
 
@@ -148,16 +148,11 @@ class MainWindow(QMainWindow):
 
     def build_config(self) -> ImapConfig | None:
         if not self.required_fields_present():
-            QMessageBox.warning(self, "缺少邮箱信息", "请填写IMAP服务器、端口、邮箱和授权码。")
-            return None
-        try:
-            port = int(self.port_input.text().strip())
-        except ValueError:
-            QMessageBox.warning(self, "端口错误", "端口必须是数字。")
+            QMessageBox.warning(self, "缺少邮箱信息", "请填写邮箱和授权码。")
             return None
         return ImapConfig(
-            server=self.server_input.text().strip(),
-            port=port,
+            server=DEFAULT_IMAP_SERVER,
+            port=DEFAULT_IMAP_PORT,
             email=self.email_input.text().strip(),
             auth_code=self.auth_code_input.text(),
         )
