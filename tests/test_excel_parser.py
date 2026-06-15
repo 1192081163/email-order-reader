@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from io import BytesIO
 
+import xlwt
 from openpyxl import Workbook
 
 from email_order_reader.excel_parser import parse_excel_attachment
@@ -31,6 +32,20 @@ def make_xlsx_with_sheets(sheet_rows):
     stream = BytesIO()
     workbook.save(stream)
     return "orders.xlsx", stream.getvalue()
+
+
+def make_xls(headers, rows):
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Orders")
+    for column, value in enumerate(headers):
+        sheet.write(0, column, value)
+    for row_index, row in enumerate(rows, start=1):
+        for column, value in enumerate(row):
+            sheet.write(row_index, column, value)
+
+    stream = BytesIO()
+    workbook.save(stream)
+    return "orders.xls", stream.getvalue()
 
 
 def test_parse_xlsx_with_chinese_headers():
@@ -121,3 +136,30 @@ def test_parse_skips_invalid_date_shaped_text_and_keeps_valid_rows():
 
     assert result.warnings == []
     assert [(row.order_number, row.deadline) for row in result.rows] == [("PO-6006", "2026-03-01")]
+
+
+def test_parse_xls_with_chinese_headers():
+    filename, content = make_xls(
+        ["客户订单号", "交货日期"],
+        [["PO-4004", "2026-08-09"]],
+    )
+
+    result = parse_excel_attachment(filename, content, ColumnAliases.default())
+
+    assert result.warnings == []
+    assert [(row.order_number, row.deadline) for row in result.rows] == [("PO-4004", "2026-08-09")]
+
+
+def test_parse_detects_columns_without_alias_headers():
+    filename, content = make_xlsx(
+        ["编号", "时间"],
+        [["PO-5005", "2026-09-01"], ["PO-5006", "2026-09-02"]],
+    )
+
+    result = parse_excel_attachment(filename, content, ColumnAliases.default())
+
+    assert result.warnings == []
+    assert [(row.order_number, row.deadline) for row in result.rows] == [
+        ("PO-5005", "2026-09-01"),
+        ("PO-5006", "2026-09-02"),
+    ]
