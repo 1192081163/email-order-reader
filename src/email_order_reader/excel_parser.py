@@ -16,8 +16,8 @@ HEADER_SCAN_LIMIT = 20
 MIN_HEURISTIC_MATCHES = 2
 MIN_REASONABLE_YEAR = 2000
 DEADLINE_PATTERNS = (
-    r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$",
-    r"^(\d{4})年(\d{1,2})月(\d{1,2})日$",
+    r"^\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\s*$",
+    r"^\s*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日(?:\s*\d{1,2}:\d{2}(?::\d{2})?)?\s*$",
 )
 SheetRows = list[list[object]]
 
@@ -118,6 +118,10 @@ def _parse_rows(
     aliases: ColumnAliases,
     message_subject: str,
 ) -> list[OrderRow] | None:
+    template_rows = _parse_job_template_rows(filename, rows, message_subject)
+    if template_rows is not None:
+        return template_rows
+
     header_match = _find_header(rows, aliases)
     if header_match is None:
         header_match = _guess_columns(rows)
@@ -143,6 +147,116 @@ def _parse_rows(
         )
 
     return parsed_rows
+
+
+def _parse_job_template_rows(
+    filename: str,
+    rows: Sequence[Sequence[object]],
+    message_subject: str,
+) -> list[OrderRow] | None:
+    order_number = _find_template_job_number(rows)
+    deadline = _find_template_delivery_date(rows)
+    if not order_number or not deadline:
+        return None
+
+    return [
+        OrderRow(
+            order_number=order_number,
+            deadline=deadline,
+            source_file=filename,
+            message_subject=message_subject,
+        )
+    ]
+
+
+def _find_template_job_number(rows: Sequence[Sequence[object]]) -> str:
+    for row in rows[:HEADER_SCAN_LIMIT]:
+        for column_index, cell in enumerate(row):
+            text = _cell_to_text(cell)
+            if not text:
+                continue
+
+            inline_job_number = _extract_inline_job_number(text)
+            if inline_job_number:
+                return inline_job_number
+
+            if _is_job_number_label(text):
+                value = _first_non_empty_cell_to_right(row, column_index)
+                if value:
+                    return _clean_template_job_number(value)
+
+    return ""
+
+
+def _find_template_delivery_date(rows: Sequence[Sequence[object]]) -> str:
+    for row in rows[:HEADER_SCAN_LIMIT]:
+        for column_index, cell in enumerate(row):
+            if not _is_delivery_date_label(_cell_to_text(cell)):
+                continue
+
+            value = _first_non_empty_cell_to_right(row, column_index)
+            deadline = _normalize_strict_deadline(value)
+            if deadline:
+                return deadline
+
+    return ""
+
+
+def _extract_inline_job_number(value: object) -> str:
+    text = _cell_to_text(value)
+    if not re.match(r"^\s*(?:ausmet|aumset)?\s*job\s*#?", text, flags=re.IGNORECASE):
+        return ""
+
+    match = re.search(r"#\s*([A-Za-z0-9-]+)", text)
+    if not match:
+        return ""
+
+    return _clean_template_job_number(match.group(1))
+
+
+def _is_job_number_label(value: str) -> bool:
+    return bool(re.match(r"^\s*(?:ausmet|aumset)?\s*job\s*#?\s*$", value, flags=re.IGNORECASE))
+
+
+def _is_delivery_date_label(value: str) -> bool:
+    normalized = _normalize_header(value)
+    return normalized in {
+        "deliverydate",
+        "deldate",
+        "交单日期",
+        "交货日期",
+        "截至时间",
+        "截止时间",
+    }
+
+
+def _first_non_empty_cell_to_right(row: Sequence[object], column_index: int) -> object:
+    for cell in row[column_index + 1 : column_index + 6]:
+        if _cell_to_text(cell):
+            return cell
+    return None
+
+
+def _clean_template_job_number(value: object) -> str:
+    text = _cell_to_text(value)
+    match = re.search(r"\b\d{4,}\b", text)
+    if match:
+        return match.group(0)
+    return text
+
+
+def _normalize_strict_deadline(value: object) -> str:
+    if isinstance(value, datetime | date):
+        return _normalize_deadline(value)
+
+    text = _cell_to_text(value)
+    if not text:
+        return ""
+
+    if any(re.match(pattern, text) for pattern in DEADLINE_PATTERNS):
+        return _normalize_deadline(text)
+
+    return ""
 
 
 def _find_header(

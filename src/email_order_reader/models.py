@@ -52,6 +52,16 @@ class EmailAttachment:
     content: bytes
     message_subject: str = ""
     message_date: datetime | None = None
+    message_uid: str = ""
+
+
+@dataclass(frozen=True)
+class AttachmentFetchResult:
+    attachments: list[EmailAttachment] = field(default_factory=list)
+    scanned_messages: int = 0
+    parsed_message_uids: list[str] = field(default_factory=list)
+    latest_uid: int = 0
+    uidvalidity: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,7 @@ class ScanResult:
     warnings: list[str] = field(default_factory=list)
     scanned_messages: int = 0
     parsed_attachments: int = 0
+    scan_mode: str = "full"
 
     @property
     def row_count(self) -> int:

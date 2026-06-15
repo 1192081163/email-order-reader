@@ -162,6 +162,24 @@ def test_parse_skips_invalid_date_shaped_text_and_keeps_valid_rows():
     assert [(row.order_number, row.deadline) for row in result.rows] == [("PO-6006", "2026-03-01")]
 
 
+def test_parse_normalizes_deadline_text_with_time_suffixes():
+    filename, content = make_xlsx(
+        ["订单号", "交单日期"],
+        [
+            ["PO-6100", "2026/6/20 00:00:00"],
+            ["PO-6101", "2026年6月19日 18:30"],
+        ],
+    )
+
+    result = parse_excel_attachment(filename, content, ColumnAliases.default())
+
+    assert result.warnings == []
+    assert [(row.order_number, row.deadline) for row in result.rows] == [
+        ("PO-6100", "2026-06-20"),
+        ("PO-6101", "2026-06-19"),
+    ]
+
+
 def test_parse_xls_with_chinese_headers():
     filename, content = make_xls(
         ["客户订单号", "交货日期"],
@@ -218,3 +236,41 @@ def test_parse_xls_native_date_cell_and_rejects_time_only_cells():
         ("PO-7007", "2026-08-09"),
         ("PO-8008", "2026-08-10"),
     ]
+
+
+def test_parse_ausmet_job_template_from_label_cells():
+    filename, content = make_xlsx(
+        [],
+        [
+            ["Ausmet Job #", None, 29912],
+            ["Builder:", None, "Coastal Design & Construction Pty Ltd"],
+            [],
+            [],
+            ["Delivery Date:", None, datetime(2026, 5, 26)],
+            ["PO No:", None, "4507277735"],
+        ],
+    )
+
+    result = parse_excel_attachment(filename, content, ColumnAliases.default())
+
+    assert result.warnings == []
+    assert [(row.order_number, row.deadline) for row in result.rows] == [("29912", "2026-05-26")]
+
+
+def test_parse_aumset_job_template_from_inline_job_number():
+    filename, content = make_xlsx(
+        [],
+        [
+            ["AUMSET JOB # 29923 REV00"],
+            ["Builder:", "Danze Mining & Building Products"],
+            [],
+            [],
+            ["Delivery Date:", datetime(2026, 5, 28)],
+            ["Purchase Order:", "6512"],
+        ],
+    )
+
+    result = parse_excel_attachment(filename, content, ColumnAliases.default())
+
+    assert result.warnings == []
+    assert [(row.order_number, row.deadline) for row in result.rows] == [("29923", "2026-05-28")]

@@ -6,4 +6,6 @@ python3 -m PyInstaller \
   --windowed \
   --clean \
   --noconfirm \
+  --hidden-import openpyxl \
+  --hidden-import xlrd \
   src/email_order_reader/app.py

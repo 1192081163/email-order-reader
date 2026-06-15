@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,12 +13,27 @@ class AppSettings:
     auth_code: str = ""
 
 
-def default_settings_path() -> Path:
+APP_NAME = "EmailOrderReader"
+
+
+def legacy_settings_path() -> Path:
     return Path.home() / ".email-order-reader" / "settings.json"
+
+
+def default_settings_path() -> Path:
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        base_path = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base_path / APP_NAME / "settings.json"
+
+    return legacy_settings_path()
 
 
 def load_settings(path: Path | None = None) -> AppSettings:
     settings_path = path or default_settings_path()
+    if path is None:
+        migrate_legacy_settings(settings_path)
+
     try:
         raw = json.loads(settings_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -29,6 +46,18 @@ def load_settings(path: Path | None = None) -> AppSettings:
         email=str(raw.get("email") or "").strip(),
         auth_code=str(raw.get("auth_code") or ""),
     )
+
+
+def migrate_legacy_settings(settings_path: Path) -> None:
+    legacy_path = legacy_settings_path()
+    if settings_path == legacy_path or settings_path.exists() or not legacy_path.exists():
+        return
+
+    try:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError:
+        return
 
 
 def save_settings(settings: AppSettings, path: Path | None = None) -> None:

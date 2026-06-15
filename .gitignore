@@ -1,6 +1,7 @@
 .worktrees
 .worktrees/
 .venv/
+.venv-windows/
 __pycache__/
 *.py[cod]
 *.egg-info/

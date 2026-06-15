@@ -4,21 +4,33 @@ Minimal desktop app for scanning recent IMAP email attachments and showing order
 
 ## Behavior
 
-- Scans the inbox for email from the latest 24 hours.
+- Scans all email in the inbox.
 - Uses Enterprise WeChat/Tencent Exmail IMAP defaults internally: `imap.exmail.qq.com:993`.
 - Reads Excel attachments with `.xlsx`, `.xlsm`, or `.xls` extensions.
 - Shows only two columns: `订单号` and `截至时间`.
+- Sorts orders by deadline with the nearest deadline first.
+- Auto-refreshes every 30 seconds after mailbox settings are saved.
+- Shows a desktop tray notification and highlights rows when new or updated orders are found.
 - Shows only email address and authorization code in the mailbox settings area, then collapses it after both are filled.
 - Saves mailbox email address and authorization code locally so they are restored on the next launch.
-- Does not save scan history.
+- Saves a local lightweight order cache for faster refreshes; it does not store email bodies or attachment files.
 
 Settings are stored in a local JSON file:
+
+```text
+Windows: %APPDATA%\EmailOrderReader\settings.json
+macOS/Linux: ~/.email-order-reader/settings.json
+```
+
+On Windows, an older config at this path is copied into `%APPDATA%` automatically if needed:
 
 ```text
 ~/.email-order-reader/settings.json
 ```
 
 The authorization code is stored in this local file, not in the system keychain.
+
+The order cache is stored next to the settings file as `order_cache.json`.
 
 ## Development
 
@@ -40,6 +52,15 @@ email-order-reader
 
 ## Package
 
+GitHub Actions:
+
+Push the project to GitHub, then open the `Build Desktop Apps` workflow. It builds both platforms and uploads these artifacts:
+
+```text
+email-order-reader-windows
+email-order-reader-macos
+```
+
 macOS:
 
 ```bash
@@ -50,6 +71,12 @@ Windows PowerShell:
 
 ```powershell
 .\scripts\build_windows.ps1
+```
+
+The Windows build output is:
+
+```text
+dist\Email Order Reader\Email Order Reader.exe
 ```
 
 Unsigned internal builds may show Windows SmartScreen or macOS Gatekeeper warnings.
