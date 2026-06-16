@@ -1,0 +1,69 @@
+{
+  "name": "order-quick-read",
+  "version": "0.1.0",
+  "description": "Desktop app for reading IMAP email Excel order attachments.",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/app.js",
+  "scripts": {
+    "electron:build:main": "tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run electron:build:main && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist-electron/main/app.js\"",
+    "electron:test": "vitest run",
+    "electron:build": "vite build && npm run electron:build:main && electron-builder",
+    "electron:typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "electron-log": "^5.0.0",
+    "electron-updater": "^6.0.0",
+    "imapflow": "^1.0.0",
+    "mailparser": "^3.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/mailparser": "^3.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^10.0.0",
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^7.0.0",
+    "wait-on": "^8.0.0",
+    "vitest": "^3.0.0"
+  },
+  "build": {
+    "productName": "Order Quick Read",
+    "appId": "com.orderquickread.desktop",
+    "directories": {
+      "output": "dist-electron-packages"
+    },
+    "files": [
+      "dist-renderer/**/*",
+      "dist-electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "OrderQuickReadSetup.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "artifactName": "OrderQuickRead-macos-${arch}.${ext}",
+      "category": "public.app-category.business"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "1192081163",
+      "repo": "order-quick-read"
+    }
+  }
+}
