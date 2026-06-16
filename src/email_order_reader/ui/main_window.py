@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QDate, QObject, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QDateEdit,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -37,6 +38,7 @@ DEFAULT_IMAP_SERVER = "imap.exmail.qq.com"
 DEFAULT_IMAP_PORT = 993
 AUTO_REFRESH_INTERVAL_MS = 30_000
 HIGHLIGHT_COLOR = QColor("#fff3a3")
+EMPTY_FILTER_DATE = QDate(2000, 1, 1)
 
 
 class ScanWorker(QObject):
@@ -108,8 +110,8 @@ class MainWindow(QMainWindow):
         self.order_rows: list = []
         self.has_scan_baseline = False
         self.highlighted_order_numbers: set[str] = set()
-        self.week_offset = 0
         self.last_scan_result: ScanResult | None = None
+        self.manual_update_check_requested = False
         self.tray_icon: QSystemTrayIcon | None = None
         self.auto_refresh_timer = QTimer(self)
         self.auto_refresh_timer.setInterval(AUTO_REFRESH_INTERVAL_MS)
@@ -154,11 +156,14 @@ class MainWindow(QMainWindow):
         self.summary_label.setObjectName("summaryLabel")
         self.summary_refresh_button = QPushButton("刷新")
         self.summary_refresh_button.setProperty("kind", "primary")
+        self.check_update_button = QPushButton("检查更新")
+        self.check_update_button.setProperty("kind", "secondary")
         self.edit_settings_button = QPushButton("修改邮箱设置")
         self.edit_settings_button.setProperty("kind", "secondary")
         summary_layout.addWidget(self.summary_label)
         summary_layout.addStretch()
         summary_layout.addWidget(self.summary_refresh_button)
+        summary_layout.addWidget(self.check_update_button)
         summary_layout.addWidget(self.edit_settings_button)
         self.summary_panel.hide()
 
@@ -167,20 +172,21 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout(self.filter_panel)
         filter_layout.setContentsMargins(14, 8, 14, 8)
         filter_layout.setSpacing(8)
-        filter_label = QLabel("发送周")
-        self.previous_week_button = QPushButton("上周")
-        self.previous_week_button.setProperty("kind", "secondary")
-        self.current_week_button = QPushButton("本周")
-        self.current_week_button.setProperty("kind", "primary")
-        self.next_week_button = QPushButton("下周")
-        self.next_week_button.setProperty("kind", "secondary")
-        self.week_label = QLabel("")
-        self.week_label.setObjectName("weekLabel")
+        search_label = QLabel("订单号")
+        self.order_search_input = QLineEdit()
+        self.order_search_input.setPlaceholderText("搜索订单号")
+        self.order_search_input.setClearButtonEnabled(True)
+        filter_label = QLabel("发送时间")
+        self.start_date_edit = _create_filter_date_edit("开始日期")
+        self.end_date_edit = _create_filter_date_edit("结束日期")
+        self.clear_date_filter_button = QPushButton("清空日期")
+        self.clear_date_filter_button.setProperty("kind", "secondary")
+        filter_layout.addWidget(search_label)
+        filter_layout.addWidget(self.order_search_input)
         filter_layout.addWidget(filter_label)
-        filter_layout.addWidget(self.previous_week_button)
-        filter_layout.addWidget(self.current_week_button)
-        filter_layout.addWidget(self.next_week_button)
-        filter_layout.addWidget(self.week_label)
+        filter_layout.addWidget(self.start_date_edit)
+        filter_layout.addWidget(self.end_date_edit)
+        filter_layout.addWidget(self.clear_date_filter_button)
         filter_layout.addStretch()
 
         self.table = QTableWidget(0, 2)
@@ -209,15 +215,16 @@ class MainWindow(QMainWindow):
         self.save_settings_button.clicked.connect(self.finish_editing_settings)
         self.refresh_button.clicked.connect(lambda: self.start_scan(full_scan=True))
         self.summary_refresh_button.clicked.connect(lambda: self.start_scan(full_scan=False))
-        self.previous_week_button.clicked.connect(self.show_previous_week)
-        self.current_week_button.clicked.connect(self.show_current_week)
-        self.next_week_button.clicked.connect(self.show_next_week)
+        self.check_update_button.clicked.connect(self.start_manual_update_check)
+        self.order_search_input.textChanged.connect(lambda _text: self.refresh_filter_view())
+        self.start_date_edit.dateChanged.connect(lambda _date: self.refresh_filter_view())
+        self.end_date_edit.dateChanged.connect(lambda _date: self.refresh_filter_view())
+        self.clear_date_filter_button.clicked.connect(self.clear_date_filter)
 
         self.apply_style()
         self.load_saved_settings()
         self._loading_settings = False
         self.ensure_tray_icon()
-        self.update_week_label()
         self.update_settings_visibility()
         if check_updates_on_start:
             QTimer.singleShot(1500, self.start_update_check)
@@ -349,8 +356,12 @@ class MainWindow(QMainWindow):
         )
 
     def render_order_rows(self) -> int:
-        self.update_week_label()
-        display_rows = _filter_order_rows_for_week(self.order_rows, self.week_offset)
+        display_rows = _filter_order_rows(
+            self.order_rows,
+            search_text=self.order_search_input.text(),
+            start_date=_filter_date_value(self.start_date_edit.date()),
+            end_date=_filter_date_value(self.end_date_edit.date()),
+        )
         self.table.setRowCount(0)
         for row in display_rows:
             row_index = self.table.rowCount()
@@ -364,19 +375,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_index, 1, deadline_item)
         return len(display_rows)
 
-    def show_previous_week(self) -> None:
-        self.week_offset -= 1
-        self.refresh_week_view()
-
-    def show_current_week(self) -> None:
-        self.week_offset = 0
-        self.refresh_week_view()
-
-    def show_next_week(self) -> None:
-        self.week_offset += 1
-        self.refresh_week_view()
-
-    def refresh_week_view(self) -> None:
+    def refresh_filter_view(self) -> None:
         displayed_count = self.render_order_rows()
         if self.last_scan_result is not None:
             self.status_label.setText(
@@ -387,9 +386,9 @@ class MainWindow(QMainWindow):
                 )
             )
 
-    def update_week_label(self) -> None:
-        week_start, week_end = _week_range(self.week_offset)
-        self.week_label.setText(f"{week_start.isoformat()} 至 {week_end.isoformat()}")
+    def clear_date_filter(self) -> None:
+        self.start_date_edit.setDate(EMPTY_FILTER_DATE)
+        self.end_date_edit.setDate(EMPTY_FILTER_DATE)
 
     def apply_scan_error(self, message: str) -> None:
         if "邮箱登录失败" in message:
@@ -417,14 +416,23 @@ class MainWindow(QMainWindow):
         self.update_check_thread.finished.connect(self._update_check_finished)
         self.update_check_thread.start()
 
+    def start_manual_update_check(self) -> None:
+        self.manual_update_check_requested = True
+        self.status_label.setText("正在检查更新...")
+        self.start_update_check()
+
     def _update_check_finished(self) -> None:
         self.update_check_thread = None
         self.update_check_worker = None
 
     def handle_update_check_result(self, update_info: UpdateInfo | None) -> None:
         if update_info is None:
+            if self.manual_update_check_requested:
+                QMessageBox.information(self, "检查更新", "当前已是最新版本。")
+                self.manual_update_check_requested = False
             return
 
+        self.manual_update_check_requested = False
         if update_info.asset_name:
             message = f"发现新版本 {update_info.tag_name}，是否现在下载？\n\n文件：{update_info.asset_name}"
         else:
@@ -446,6 +454,9 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(QUrl(update_info.release_url))
 
     def handle_update_check_error(self, _message: str) -> None:
+        if self.manual_update_check_requested:
+            QMessageBox.warning(self, "检查更新失败", "检查更新失败，不影响订单读取。")
+            self.manual_update_check_requested = False
         return
 
     def start_update_download(self, update_info: UpdateInfo) -> None:
@@ -560,7 +571,7 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
 
-            QLineEdit {
+            QLineEdit, QDateEdit {
                 background: #ffffff;
                 border: 1px solid #cfd6e0;
                 border-radius: 6px;
@@ -569,7 +580,7 @@ class MainWindow(QMainWindow):
                 selection-background-color: #2563eb;
             }
 
-            QLineEdit:focus {
+            QLineEdit:focus, QDateEdit:focus {
                 border-color: #2563eb;
             }
 
@@ -664,7 +675,7 @@ def _format_scan_status(
     elif result.row_count == 0:
         details.append("已找到附件，但没有识别出订单号和截至时间；请检查附件格式是否为支持的订单模板")
     elif displayed_row_count is not None and displayed_row_count == 0:
-        details.append("当前选择的周没有订单")
+        details.append("当前筛选条件没有订单")
 
     details.extend(result.warnings)
     if details:
@@ -688,19 +699,48 @@ def _order_row_sort_key(row) -> tuple:
     return (0, deadline, row.order_number)
 
 
-def _filter_order_rows_for_week(rows: list, week_offset: int) -> list:
-    week_start, week_end = _week_range(week_offset)
-    return [
-        row
-        for row in rows
-        if (sent_date := _order_row_sent_date(row)) is not None and week_start <= sent_date <= week_end
-    ]
+def _create_filter_date_edit(placeholder: str) -> QDateEdit:
+    date_edit = QDateEdit()
+    date_edit.setCalendarPopup(True)
+    date_edit.setDisplayFormat("yyyy-MM-dd")
+    date_edit.setMinimumDate(EMPTY_FILTER_DATE)
+    date_edit.setSpecialValueText(placeholder)
+    date_edit.setDate(EMPTY_FILTER_DATE)
+    return date_edit
 
 
-def _week_range(week_offset: int) -> tuple[date, date]:
-    today = date.today()
-    week_start = today - timedelta(days=today.weekday()) + timedelta(days=week_offset * 7)
-    return week_start, week_start + timedelta(days=6)
+def _filter_date_value(value: QDate) -> date | None:
+    if value <= EMPTY_FILTER_DATE:
+        return None
+    return date(value.year(), value.month(), value.day())
+
+
+def _filter_order_rows(
+    rows: list,
+    search_text: str = "",
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list:
+    search = search_text.strip().lower()
+    date_filter_enabled = start_date is not None or end_date is not None
+    display_rows = []
+
+    for row in rows:
+        if search and search not in row.order_number.lower():
+            continue
+
+        if date_filter_enabled:
+            sent_date = _order_row_sent_date(row)
+            if sent_date is None:
+                continue
+            if start_date is not None and sent_date < start_date:
+                continue
+            if end_date is not None and sent_date > end_date:
+                continue
+
+        display_rows.append(row)
+
+    return display_rows
 
 
 def _order_row_sent_date(row) -> date | None:
