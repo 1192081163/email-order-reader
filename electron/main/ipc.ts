@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+import { app, ipcMain, shell } from "electron";
 import { join } from "node:path";
 
 import {
@@ -9,8 +9,11 @@ import {
   type UpdateInfo,
 } from "../shared/types.js";
 import { ImapAttachmentClient } from "./services/mailClient.js";
+import { countOrderChanges, notifyOrderChanges } from "./services/notifier.js";
+import { loadOrderCache } from "./services/orderCache.js";
 import { scanOrders } from "./services/orderScanner.js";
 import { loadSettings, saveSettings } from "./services/settingsStore.js";
+import { checkForElectronUpdate, downloadUpdateAsset } from "./services/updater.js";
 
 function appDataPath(filename: string): string {
   return join(app.getPath("userData"), filename);
@@ -34,14 +37,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.scanOrders, async (_event, options: ScanOrdersRequest) => scanStoredMailbox(options));
 
-  ipcMain.handle(IPC_CHANNELS.checkUpdates, async (): Promise<UpdateInfo | null> => null);
+  ipcMain.handle(IPC_CHANNELS.checkUpdates, async (): Promise<UpdateInfo | null> => checkForElectronUpdate());
 
-  ipcMain.handle(IPC_CHANNELS.downloadUpdate, async (): Promise<string> => {
-    throw new Error("更新下载功能将在后续步骤接入。");
+  ipcMain.handle(IPC_CHANNELS.downloadUpdate, async (_event, update: UpdateInfo): Promise<string> => {
+    const downloadPath = await downloadUpdateAsset(update, app.getPath("downloads"));
+    await shell.showItemInFolder(downloadPath);
+    return downloadPath;
   });
 
-  ipcMain.handle(IPC_CHANNELS.installUpdate, async (): Promise<void> => {
-    throw new Error("更新安装功能将在后续步骤接入。");
+  ipcMain.handle(IPC_CHANNELS.installUpdate, async (_event, installerPath: string): Promise<void> => {
+    const errorMessage = await shell.openPath(installerPath);
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
   });
 }
 
@@ -58,13 +66,20 @@ async function scanStoredMailbox(options: ScanOrdersRequest): Promise<ScanResult
     throw new Error("请先填写并保存企业微信邮箱和授权码。");
   }
 
-  return scanOrders({
+  const cachePath = appDataPath("order_cache.json");
+  const previousCache = await loadOrderCache(cachePath);
+  const result = await scanOrders({
     client: new ImapAttachmentClient({
       email: settings.email,
       authCode: settings.authCode,
     }),
     fullScan: options.fullScan,
-    cachePath: appDataPath("order_cache.json"),
+    cachePath,
     accountEmail: settings.email,
   });
+  if (previousCache.rows.length > 0) {
+    notifyOrderChanges(countOrderChanges(previousCache.rows, result.rows));
+  }
+
+  return result;
 }

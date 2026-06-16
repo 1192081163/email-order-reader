@@ -120,5 +120,9 @@ button.primary {
 }
 
 .status-bar {
+  align-items: center;
   color: #4b5563;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
 }

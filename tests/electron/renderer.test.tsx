@@ -123,4 +123,49 @@ describe("Electron renderer", () => {
     expect(await screen.findByText("IMAP 登录失败")).toBeInTheDocument();
     expect(screen.getByText("saved@example.com")).toBeInTheDocument();
   });
+
+  it("checks for updates on startup without blocking saved settings", async () => {
+    vi.mocked(api.loadSettings).mockResolvedValue({ email: "saved@example.com", authCode: "secret" });
+    vi.mocked(api.checkUpdates).mockResolvedValue({
+      tagName: "v1.2.0",
+      releaseUrl: "https://github.com/1192081163/order-quick-read/releases/tag/v1.2.0",
+      assetName: "OrderQuickReadSetup.exe",
+      assetUrl: "https://example.com/OrderQuickReadSetup.exe",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("saved@example.com")).toBeInTheDocument();
+    expect(await screen.findByText("发现新版本 v1.2.0。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载新版" })).toBeInTheDocument();
+  });
+
+  it("downloads and opens an available update from the status action", async () => {
+    vi.mocked(api.loadSettings).mockResolvedValue({ email: "saved@example.com", authCode: "secret" });
+    vi.mocked(api.checkUpdates).mockResolvedValue({
+      tagName: "v1.2.0",
+      releaseUrl: "https://github.com/1192081163/order-quick-read/releases/tag/v1.2.0",
+      assetName: "OrderQuickReadSetup.exe",
+      assetUrl: "https://example.com/OrderQuickReadSetup.exe",
+    });
+    vi.mocked(api.downloadUpdate).mockResolvedValue("C:\\Users\\admin\\Downloads\\OrderQuickReadSetup.exe");
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "检查更新" }));
+    expect(await screen.findByText("发现新版本 v1.2.0。")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下载新版" }));
+    await waitFor(() =>
+      expect(api.downloadUpdate).toHaveBeenCalledWith({
+        tagName: "v1.2.0",
+        releaseUrl: "https://github.com/1192081163/order-quick-read/releases/tag/v1.2.0",
+        assetName: "OrderQuickReadSetup.exe",
+        assetUrl: "https://example.com/OrderQuickReadSetup.exe",
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开安装包" }));
+    await waitFor(() => expect(api.installUpdate).toHaveBeenCalledWith("C:\\Users\\admin\\Downloads\\OrderQuickReadSetup.exe"));
+  });
 });

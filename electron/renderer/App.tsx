@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { filterOrderRows } from "../shared/filtering";
 import { sortOrderRows } from "../shared/sorting";
-import type { AppSettings, DateFilter, OrderRow, RendererApi, ScanResult } from "../shared/types";
+import type { AppSettings, DateFilter, OrderRow, RendererApi, ScanResult, UpdateInfo } from "../shared/types";
 import { FilterBar } from "./components/FilterBar";
 import { OrderTable } from "./components/OrderTable";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -41,6 +41,8 @@ export function App() {
   const [filter, setFilter] = useState<DateFilter>(EMPTY_FILTER);
   const [status, setStatus] = useState("请填写邮箱和授权码。");
   const [isBusy, setIsBusy] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
+  const [downloadedUpdatePath, setDownloadedUpdatePath] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -74,7 +76,28 @@ export function App() {
       }
     }
 
+    async function checkStartupUpdate() {
+      try {
+        const api = rendererApi();
+        if (!api) {
+          return;
+        }
+
+        const update = await api.checkUpdates();
+        if (!isMounted || !update) {
+          return;
+        }
+
+        setPendingUpdate(update);
+        setDownloadedUpdatePath("");
+        setStatus(`发现新版本 ${update.tagName}。`);
+      } catch {
+        // 启动更新检查失败时不影响正常读取订单。
+      }
+    }
+
     void loadSettings();
+    void checkStartupUpdate();
 
     return () => {
       isMounted = false;
@@ -165,7 +188,55 @@ export function App() {
       }
 
       const update = await api.checkUpdates();
-      setStatus(update ? `发现新版本 ${update.tagName}` : "当前已是最新版本。");
+      setPendingUpdate(update);
+      setDownloadedUpdatePath("");
+      setStatus(update ? `发现新版本 ${update.tagName}。` : "当前已是最新版本。");
+    } catch (error) {
+      setStatus(statusFromError(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function downloadUpdate() {
+    if (!pendingUpdate) {
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      setStatus("正在下载新版安装包...");
+      const api = rendererApi();
+      if (!api) {
+        setStatus("桌面接口尚未连接。请在 Electron 应用中打开。");
+        return;
+      }
+
+      const installerPath = await api.downloadUpdate(pendingUpdate);
+      setDownloadedUpdatePath(installerPath);
+      setStatus("新版安装包已下载。");
+    } catch (error) {
+      setStatus(statusFromError(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!downloadedUpdatePath) {
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      const api = rendererApi();
+      if (!api) {
+        setStatus("桌面接口尚未连接。请在 Electron 应用中打开。");
+        return;
+      }
+
+      await api.installUpdate(downloadedUpdatePath);
+      setStatus("已打开新版安装包。请按安装向导完成更新。");
     } catch (error) {
       setStatus(statusFromError(error));
     } finally {
@@ -195,7 +266,12 @@ export function App() {
       )}
       <FilterBar filter={filter} onChange={setFilter} />
       <OrderTable rows={displayRows} />
-      <StatusBar status={status} />
+      <StatusBar
+        actionLabel={downloadedUpdatePath ? "打开安装包" : pendingUpdate ? "下载新版" : undefined}
+        disabled={isBusy}
+        status={status}
+        onAction={downloadedUpdatePath ? () => void installUpdate() : pendingUpdate ? () => void downloadUpdate() : undefined}
+      />
     </main>
   );
 }
