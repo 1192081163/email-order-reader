@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../electron/renderer/App";
 import type { RendererApi, ScanResult } from "../../electron/shared/types";
@@ -31,6 +31,10 @@ beforeEach(() => {
   vi.mocked(api.downloadUpdate).mockResolvedValue("");
   vi.mocked(api.installUpdate).mockResolvedValue();
   window.orderQuickRead = api;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("Electron renderer", () => {
@@ -122,6 +126,29 @@ describe("Electron renderer", () => {
 
     expect(await screen.findByText("IMAP 登录失败")).toBeInTheDocument();
     expect(screen.getByText("saved@example.com")).toBeInTheDocument();
+  });
+
+  it("auto refreshes saved mailbox every 30 seconds", async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.loadSettings).mockResolvedValue({ email: "saved@example.com", authCode: "secret" });
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("saved@example.com")).toBeInTheDocument();
+    expect(api.scanOrders).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000);
+      await Promise.resolve();
+    });
+
+    expect(api.scanOrders).toHaveBeenCalledWith({ fullScan: false });
+    expect(screen.getByText("扫描到 0 封邮件，找到 0 个 Excel 附件，读取 0 条订单。")).toBeInTheDocument();
   });
 
   it("checks for updates on startup without blocking saved settings", async () => {

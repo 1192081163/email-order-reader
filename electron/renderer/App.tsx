@@ -11,6 +11,7 @@ import { Toolbar } from "./components/Toolbar";
 
 const EMPTY_SETTINGS: AppSettings = { email: "", authCode: "" };
 const EMPTY_FILTER: DateFilter = { searchText: "", startDate: "", endDate: "" };
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
 
 function hasCompleteSettings(settings: AppSettings): boolean {
   return Boolean(settings.email.trim() && settings.authCode);
@@ -104,6 +105,20 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (editingSettings || !hasCompleteSettings(settings)) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (!isBusy) {
+        void scan(false, { auto: true });
+      }
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [editingSettings, isBusy, settings]);
+
   const displayRows = useMemo(() => filterOrderRows(sortOrderRows(rows), filter), [rows, filter]);
 
   async function saveSettings(): Promise<boolean> {
@@ -153,14 +168,14 @@ export function App() {
     return true;
   }
 
-  async function scan(fullScan: boolean) {
+  async function scan(fullScan: boolean, options: { auto?: boolean } = {}) {
     if (!(await ensureReadyForScan())) {
       return;
     }
 
     try {
       setIsBusy(true);
-      setStatus(fullScan ? "正在扫描全部邮件..." : "正在刷新新邮件...");
+      setStatus(fullScan ? "正在扫描全部邮件..." : options.auto ? "自动刷新新邮件..." : "正在刷新新邮件...");
       const api = rendererApi();
       if (!api) {
         setStatus("桌面接口尚未连接。请在 Electron 应用中打开。");
