@@ -1,6 +1,8 @@
-import { Notification } from "electron";
+import { createRequire } from "node:module";
 
 import type { OrderRow } from "../../shared/types.js";
+
+const require = createRequire(import.meta.url);
 
 export type OrderChangeSummary = {
   newCount: number;
@@ -32,7 +34,8 @@ export function notifyOrderChanges(summary: OrderChangeSummary): void {
   if (summary.updatedCount > 0) {
     parts.push(`更新 ${summary.updatedCount} 条订单`);
   }
-  if (!parts.length || !Notification.isSupported()) {
+  const Notification = loadNotification();
+  if (!parts.length || !Notification?.isSupported()) {
     return;
   }
 
@@ -40,4 +43,12 @@ export function notifyOrderChanges(summary: OrderChangeSummary): void {
     title: "邮件订单更新",
     body: parts.join("，"),
   }).show();
+}
+
+function loadNotification(): typeof import("electron").Notification | null {
+  try {
+    return (require("electron") as typeof import("electron")).Notification;
+  } catch {
+    return null;
+  }
 }
