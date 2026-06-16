@@ -32,6 +32,8 @@ def test_github_actions_builds_windows_and_macos_artifacts():
     assert "EmailOrderReader.dmg#EmailOrderReader.dmg" in content
     assert "build-release:" in content
     assert "needs: [build-windows, build-macos]" in content
+    release_job = content.split("  build-release:", maxsplit=1)[1]
+    assert "actions/checkout@v6" in release_job
     assert "GH_TOKEN: ${{ github.token }}" in content
     assert "gh release create" in content
     assert content.count("gh release create") == 1
