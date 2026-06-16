@@ -4,8 +4,8 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -30,6 +30,7 @@ from email_order_reader.email_client import ImapEmailClient
 from email_order_reader.models import ImapConfig, ScanResult
 from email_order_reader.scan_service import OrderScanService
 from email_order_reader.settings import AppSettings, load_settings, save_settings
+from email_order_reader.updates import UpdateInfo, check_for_update, download_update_asset
 
 
 DEFAULT_IMAP_SERVER = "imap.exmail.qq.com"
@@ -61,13 +62,44 @@ class ScanWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class UpdateCheckWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(check_for_update())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class UpdateDownloadWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, update_info: UpdateInfo) -> None:
+        super().__init__()
+        self.update_info = update_info
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(download_update_asset(self.update_info))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, settings_path: Path | None = None) -> None:
+    def __init__(self, settings_path: Path | None = None, check_updates_on_start: bool = True) -> None:
         super().__init__()
         self.setWindowTitle("邮件订单读取")
         self.resize(760, 520)
         self.thread: QThread | None = None
         self.worker: ScanWorker | None = None
+        self.update_check_thread: QThread | None = None
+        self.update_check_worker: UpdateCheckWorker | None = None
+        self.update_download_thread: QThread | None = None
+        self.update_download_worker: UpdateDownloadWorker | None = None
+        self.pending_update_release_url = ""
         self.settings_path = settings_path
         self.order_cache_path = _order_cache_path(settings_path)
         self._loading_settings = True
@@ -187,6 +219,8 @@ class MainWindow(QMainWindow):
         self.ensure_tray_icon()
         self.update_week_label()
         self.update_settings_visibility()
+        if check_updates_on_start:
+            QTimer.singleShot(1500, self.start_update_check)
 
     def required_fields_present(self) -> bool:
         return all(
@@ -364,6 +398,103 @@ class MainWindow(QMainWindow):
             return
 
         self.status_label.setText(f"扫描失败：{message}")
+
+    def start_update_check(self) -> None:
+        if self.update_check_thread is not None:
+            return
+
+        self.update_check_thread = QThread()
+        self.update_check_worker = UpdateCheckWorker()
+        self.update_check_worker.moveToThread(self.update_check_thread)
+        self.update_check_thread.started.connect(self.update_check_worker.run)
+        self.update_check_worker.finished.connect(self.handle_update_check_result)
+        self.update_check_worker.failed.connect(self.handle_update_check_error)
+        self.update_check_worker.finished.connect(self.update_check_thread.quit)
+        self.update_check_worker.failed.connect(self.update_check_thread.quit)
+        self.update_check_worker.finished.connect(self.update_check_worker.deleteLater)
+        self.update_check_worker.failed.connect(self.update_check_worker.deleteLater)
+        self.update_check_thread.finished.connect(self.update_check_thread.deleteLater)
+        self.update_check_thread.finished.connect(self._update_check_finished)
+        self.update_check_thread.start()
+
+    def _update_check_finished(self) -> None:
+        self.update_check_thread = None
+        self.update_check_worker = None
+
+    def handle_update_check_result(self, update_info: UpdateInfo | None) -> None:
+        if update_info is None:
+            return
+
+        if update_info.asset_name:
+            message = f"发现新版本 {update_info.tag_name}，是否现在下载？\n\n文件：{update_info.asset_name}"
+        else:
+            message = f"发现新版本 {update_info.tag_name}，当前系统没有匹配的安装包，是否打开下载页面？"
+
+        answer = QMessageBox.question(
+            self,
+            "发现新版本",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        if update_info.asset_url:
+            self.start_update_download(update_info)
+        elif update_info.release_url:
+            QDesktopServices.openUrl(QUrl(update_info.release_url))
+
+    def handle_update_check_error(self, _message: str) -> None:
+        return
+
+    def start_update_download(self, update_info: UpdateInfo) -> None:
+        if self.update_download_thread is not None:
+            return
+
+        if not update_info.asset_url:
+            if update_info.release_url:
+                QDesktopServices.openUrl(QUrl(update_info.release_url))
+            return
+
+        self.pending_update_release_url = update_info.release_url
+        self.status_label.setText(f"正在下载新版 {update_info.tag_name}...")
+        self.update_download_thread = QThread()
+        self.update_download_worker = UpdateDownloadWorker(update_info)
+        self.update_download_worker.moveToThread(self.update_download_thread)
+        self.update_download_thread.started.connect(self.update_download_worker.run)
+        self.update_download_worker.finished.connect(self.handle_update_download_finished)
+        self.update_download_worker.failed.connect(self.handle_update_download_error)
+        self.update_download_worker.finished.connect(self.update_download_thread.quit)
+        self.update_download_worker.failed.connect(self.update_download_thread.quit)
+        self.update_download_worker.finished.connect(self.update_download_worker.deleteLater)
+        self.update_download_worker.failed.connect(self.update_download_worker.deleteLater)
+        self.update_download_thread.finished.connect(self.update_download_thread.deleteLater)
+        self.update_download_thread.finished.connect(self._update_download_finished)
+        self.update_download_thread.start()
+
+    def _update_download_finished(self) -> None:
+        self.update_download_thread = None
+        self.update_download_worker = None
+
+    def handle_update_download_finished(self, download_path: Path) -> None:
+        self.status_label.setText(f"新版已下载：{download_path}")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(download_path)))
+
+    def handle_update_download_error(self, message: str) -> None:
+        self.status_label.setText(f"新版下载失败：{message}")
+        if not self.pending_update_release_url:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "新版下载失败",
+            "新版下载失败，是否打开 GitHub 下载页面？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(self.pending_update_release_url))
 
     def detect_order_changes(self, rows: list) -> set[str]:
         current_orders = {row.order_number: row.deadline for row in rows}

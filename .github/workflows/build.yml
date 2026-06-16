@@ -26,6 +26,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Stamp build info
+        shell: pwsh
+        run: python scripts/stamp_build_info.py "build-${{ github.run_number }}"
+
       - name: Build package
         shell: pwsh
         run: .\scripts\build_windows.ps1
@@ -53,6 +57,9 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Stamp build info
+        run: python scripts/stamp_build_info.py "build-${{ github.run_number }}"
 
       - name: Install dependencies
         run: |

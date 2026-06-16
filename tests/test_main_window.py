@@ -1,11 +1,12 @@
 from datetime import date
 
 import pytest
-from PySide6.QtWidgets import QLabel, QSystemTrayIcon
+from PySide6.QtWidgets import QLabel, QMessageBox, QSystemTrayIcon
 
 import email_order_reader.settings as settings_module
 import email_order_reader.ui.main_window as main_window_module
 from email_order_reader.models import OrderRow, ScanResult
+from email_order_reader.updates import UpdateInfo
 from email_order_reader.ui.main_window import DEFAULT_IMAP_PORT, DEFAULT_IMAP_SERVER, MainWindow
 
 
@@ -444,3 +445,74 @@ def test_window_saves_credentials_after_required_fields_are_filled(qtbot, tmp_pa
         '  "auth_code": "secret"\n'
         '}'
     )
+
+
+def test_window_prompts_to_download_new_update(qtbot, monkeypatch):
+    window = MainWindow(check_updates_on_start=False)
+    qtbot.addWidget(window)
+    update = UpdateInfo(
+        tag_name="build-15",
+        release_url="https://github.com/1192081163/email-order-reader/releases/tag/build-15",
+        asset_name="EmailOrderReader.exe",
+        asset_url="https://example.com/EmailOrderReader.exe",
+    )
+    downloads = []
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(window, "start_update_download", lambda update_info: downloads.append(update_info))
+
+    window.handle_update_check_result(update)
+
+    assert downloads == [update]
+
+
+def test_window_opens_release_page_when_update_asset_is_missing(qtbot, monkeypatch):
+    window = MainWindow(check_updates_on_start=False)
+    qtbot.addWidget(window)
+    update = UpdateInfo(
+        tag_name="build-16",
+        release_url="https://github.com/1192081163/email-order-reader/releases/tag/build-16",
+        asset_name="",
+        asset_url="",
+    )
+    opened_urls = []
+
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(main_window_module.QDesktopServices, "openUrl", lambda url: opened_urls.append(url.toString()) or True)
+
+    window.handle_update_check_result(update)
+
+    assert opened_urls == [update.release_url]
+
+
+def test_window_ignores_update_check_failures(qtbot):
+    window = MainWindow(check_updates_on_start=False)
+    qtbot.addWidget(window)
+    original_status = window.status_label.text()
+
+    window.handle_update_check_error("network unavailable")
+
+    assert window.status_label.text() == original_status
+
+
+def test_window_opens_downloaded_update_file(qtbot, monkeypatch, tmp_path):
+    window = MainWindow(check_updates_on_start=False)
+    qtbot.addWidget(window)
+    download_path = tmp_path / "EmailOrderReader.exe"
+    download_path.write_bytes(b"fake exe")
+    opened_files = []
+
+    monkeypatch.setattr(main_window_module.QDesktopServices, "openUrl", lambda url: opened_files.append(url.toLocalFile()) or True)
+
+    window.handle_update_download_finished(download_path)
+
+    assert opened_files == [str(download_path)]
+    assert "新版已下载" in window.status_label.text()
