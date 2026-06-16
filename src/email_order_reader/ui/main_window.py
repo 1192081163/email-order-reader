@@ -119,20 +119,29 @@ class MainWindow(QMainWindow):
         summary_layout.setSpacing(10)
         self.summary_label = QLabel("")
         self.summary_label.setObjectName("summaryLabel")
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItem("全部", "all")
-        self.filter_combo.addItem("今日", "today")
-        self.filter_combo.addItem("本周", "week")
         self.summary_refresh_button = QPushButton("刷新")
         self.summary_refresh_button.setProperty("kind", "primary")
         self.edit_settings_button = QPushButton("修改邮箱设置")
         self.edit_settings_button.setProperty("kind", "secondary")
         summary_layout.addWidget(self.summary_label)
         summary_layout.addStretch()
-        summary_layout.addWidget(self.filter_combo)
         summary_layout.addWidget(self.summary_refresh_button)
         summary_layout.addWidget(self.edit_settings_button)
         self.summary_panel.hide()
+
+        self.filter_panel = QWidget()
+        self.filter_panel.setObjectName("filterPanel")
+        filter_layout = QHBoxLayout(self.filter_panel)
+        filter_layout.setContentsMargins(14, 8, 14, 8)
+        filter_layout.setSpacing(8)
+        filter_label = QLabel("筛选")
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItem("全部", "all")
+        self.filter_combo.addItem("每日", "today")
+        self.filter_combo.addItem("每周", "week")
+        filter_layout.addWidget(filter_label)
+        filter_layout.addWidget(self.filter_combo)
+        filter_layout.addStretch()
 
         self.table = QTableWidget(0, 2)
         self.table.setObjectName("ordersTable")
@@ -150,6 +159,7 @@ class MainWindow(QMainWindow):
 
         self.root_layout.addWidget(self.settings_panel)
         self.root_layout.addWidget(self.summary_panel)
+        self.root_layout.addWidget(self.filter_panel)
         self.root_layout.addWidget(self.table)
         self.root_layout.addWidget(self.status_label)
 
@@ -356,7 +366,7 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
             }
 
-            QWidget#settingsPanel, QWidget#toolbar {
+            QWidget#settingsPanel, QWidget#toolbar, QWidget#filterPanel {
                 background: #ffffff;
                 border: 1px solid #d8dde6;
                 border-radius: 8px;
@@ -483,9 +493,9 @@ def _sorted_order_rows(rows: list) -> list:
 def _order_row_sort_key(row) -> tuple:
     deadline = _parse_deadline_date(row.deadline)
     if deadline is None:
-        return (1, 0, row.deadline, row.order_number)
+        return (1, datetime.max.date(), row.deadline, row.order_number)
 
-    return (0, -deadline.toordinal(), row.order_number)
+    return (0, deadline, row.order_number)
 
 
 def _filter_order_rows(rows: list, filter_mode: str) -> list:

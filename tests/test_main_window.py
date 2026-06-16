@@ -104,6 +104,19 @@ def test_manual_column_alias_controls_are_not_shown(qtbot):
     assert "截至时间别名" not in visible_labels
 
 
+def test_deadline_filter_controls_are_always_visible(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert hasattr(window, "filter_panel")
+    assert not window.filter_panel.isHidden()
+    assert [window.filter_combo.itemText(index) for index in range(window.filter_combo.count())] == [
+        "全部",
+        "每日",
+        "每周",
+    ]
+
+
 def test_table_renders_order_rows(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -139,8 +152,8 @@ def test_table_sorts_order_rows_by_deadline(qtbot):
     )
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "PO-LATE",
         "PO-EARLY",
+        "PO-LATE",
         "PO-UNKNOWN",
     ]
 
@@ -162,13 +175,13 @@ def test_table_sorts_legacy_deadline_text_formats(qtbot):
     )
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "PO-SLASH",
         "PO-CHINESE",
+        "PO-SLASH",
         "PO-UNKNOWN",
     ]
 
 
-def test_table_sorts_deadlines_by_date_descending(qtbot):
+def test_table_sorts_deadlines_by_date_ascending(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
@@ -190,14 +203,14 @@ def test_table_sorts_deadlines_by_date_descending(qtbot):
     )
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "29953",
-        "29988",
-        "29917",
-        "29923",
-        "29905",
+        "29914",
         "29904",
         "29912",
-        "29914",
+        "29905",
+        "29917",
+        "29923",
+        "29988",
+        "29953",
     ]
 
 
@@ -226,23 +239,23 @@ def test_deadline_filter_shows_today_and_current_week(qtbot, monkeypatch):
     )
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "NEXT-WEEK",
-        "WEEK-END",
-        "TODAY",
         "WEEK-START",
+        "TODAY",
+        "WEEK-END",
+        "NEXT-WEEK",
         "UNKNOWN",
     ]
 
-    window.filter_combo.setCurrentText("今日")
+    window.filter_combo.setCurrentText("每日")
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == ["TODAY"]
 
-    window.filter_combo.setCurrentText("本周")
+    window.filter_combo.setCurrentText("每周")
 
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "WEEK-END",
-        "TODAY",
         "WEEK-START",
+        "TODAY",
+        "WEEK-END",
     ]
 
 
@@ -291,8 +304,8 @@ def test_later_scan_notifies_new_and_updated_orders(qtbot, monkeypatch):
     assert notifications == [(1, 1)]
     assert window.highlighted_order_numbers == {"PO-1001", "PO-2002"}
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "PO-1001",
         "PO-2002",
+        "PO-1001",
     ]
 
 
