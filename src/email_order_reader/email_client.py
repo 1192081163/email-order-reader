@@ -80,7 +80,8 @@ class ImapEmailClient:
         attachments: list[EmailAttachment] = []
         scanned_messages = 0
 
-        with imaplib.IMAP4_SSL(self.config.server, self.config.port, timeout=self.timeout_seconds) as mailbox:
+        mailbox = imaplib.IMAP4_SSL(self.config.server, self.config.port, timeout=self.timeout_seconds)
+        try:
             mailbox.login(self.config.email, self.config.auth_code)
             mailbox.select("INBOX")
             if cutoff is None:
@@ -107,6 +108,8 @@ class ImapEmailClient:
 
                     scanned_messages += 1
                     attachments.extend(extract_excel_attachments(message))
+        finally:
+            _logout_safely(mailbox)
 
         return attachments, scanned_messages
 
@@ -123,7 +126,8 @@ class ImapEmailClient:
         parsed_message_uids: list[str] = []
         scanned_messages = 0
 
-        with imaplib.IMAP4_SSL(self.config.server, self.config.port, timeout=self.timeout_seconds) as mailbox:
+        mailbox = imaplib.IMAP4_SSL(self.config.server, self.config.port, timeout=self.timeout_seconds)
+        try:
             mailbox.login(self.config.email, self.config.auth_code)
             mailbox.select("INBOX")
             uidvalidity = _read_uidvalidity(mailbox)
@@ -155,6 +159,8 @@ class ImapEmailClient:
                     scanned_messages += 1
                     parsed_message_uids.append(str(message_uid))
                     attachments.extend(extract_excel_attachments(message, message_uid=str(message_uid)))
+        finally:
+            _logout_safely(mailbox)
 
         latest_uid = max(message_uids, default=since_uid or 0)
         return AttachmentFetchResult(
@@ -192,3 +198,10 @@ def _read_uidvalidity(mailbox) -> str:
     if isinstance(value, bytes):
         return value.decode(errors="replace")
     return str(value)
+
+
+def _logout_safely(mailbox) -> None:
+    try:
+        mailbox.logout()
+    except (imaplib.IMAP4.abort, imaplib.IMAP4.error, OSError, EOFError):
+        pass

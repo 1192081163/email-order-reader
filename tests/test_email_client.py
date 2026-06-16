@@ -83,6 +83,32 @@ def test_imap_client_fetches_all_inbox_messages_without_date_filter(monkeypatch)
     assert [attachment.filename for attachment in attachments] == ["old-orders.xlsx"]
 
 
+def test_imap_client_ignores_logout_eof_after_fetching_messages(monkeypatch):
+    message = EmailMessage()
+    message["Subject"] = "旧订单"
+    message["Date"] = "Mon, 15 Jun 2020 10:00:00 +0000"
+    message.set_content("see attachment")
+    message.add_attachment(
+        b"excel-bytes",
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="old-orders.xlsx",
+    )
+    mailbox = FakeLogoutEofMailbox(message.as_bytes())
+
+    monkeypatch.setattr(
+        "email_order_reader.email_client.imaplib.IMAP4_SSL",
+        lambda server, port, timeout: mailbox,
+    )
+
+    client = ImapEmailClient(ImapConfig(server="imap.example.com", email="buyer@example.com", auth_code="secret"))
+    attachments, scanned_messages = client.fetch_excel_attachments()
+
+    assert scanned_messages == 1
+    assert [attachment.filename for attachment in attachments] == ["old-orders.xlsx"]
+    assert mailbox.logout_called
+
+
 def test_imap_client_fetches_incremental_messages_by_uid(monkeypatch):
     message = EmailMessage()
     message["Subject"] = "新订单"
@@ -115,6 +141,34 @@ def test_imap_client_fetches_incremental_messages_by_uid(monkeypatch):
     ]
 
 
+def test_imap_client_ignores_logout_eof_after_incremental_fetch(monkeypatch):
+    message = EmailMessage()
+    message["Subject"] = "新订单"
+    message["Date"] = "Mon, 15 Jun 2026 10:00:00 +0000"
+    message.set_content("see attachment")
+    message.add_attachment(
+        b"excel-bytes",
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="new-orders.xlsx",
+    )
+    mailbox = FakeLogoutEofUidMailbox(message.as_bytes())
+
+    monkeypatch.setattr(
+        "email_order_reader.email_client.imaplib.IMAP4_SSL",
+        lambda server, port, timeout: mailbox,
+    )
+
+    client = ImapEmailClient(ImapConfig(server="imap.example.com", email="buyer@example.com", auth_code="secret"))
+    result = client.fetch_excel_attachment_batch(since_uid=41)
+
+    assert result.scanned_messages == 1
+    assert [(attachment.filename, attachment.message_uid) for attachment in result.attachments] == [
+        ("new-orders.xlsx", "42")
+    ]
+    assert mailbox.logout_called
+
+
 class FakeMailbox:
     def __init__(self, raw_message: bytes):
         self.raw_message = raw_message
@@ -125,6 +179,10 @@ class FakeMailbox:
 
     def __exit__(self, exc_type, exc, traceback):
         return False
+
+    def logout(self):
+        self.logout_called = True
+        return "OK", [b"LOGOUT"]
 
     def login(self, email, auth_code):
         self.email = email
@@ -141,6 +199,21 @@ class FakeMailbox:
         return "OK", [(b"RFC822", self.raw_message)]
 
 
+class FakeLogoutEofMailbox(FakeMailbox):
+    def __init__(self, raw_message: bytes):
+        super().__init__(raw_message)
+        self.logout_called = False
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.logout()
+
+    def logout(self):
+        from imaplib import IMAP4
+
+        self.logout_called = True
+        raise IMAP4.abort("command: LOGOUT => socket error: EOF")
+
+
 class FakeUidMailbox:
     def __init__(self, raw_message: bytes):
         self.raw_message = raw_message
@@ -151,6 +224,10 @@ class FakeUidMailbox:
 
     def __exit__(self, exc_type, exc, traceback):
         return False
+
+    def logout(self):
+        self.logout_called = True
+        return "OK", [b"LOGOUT"]
 
     def login(self, email, auth_code):
         self.email = email
@@ -172,3 +249,18 @@ class FakeUidMailbox:
         if args[0] == "FETCH":
             return "OK", [(b"42 (RFC822 {1}", self.raw_message)]
         return "NO", []
+
+
+class FakeLogoutEofUidMailbox(FakeUidMailbox):
+    def __init__(self, raw_message: bytes):
+        super().__init__(raw_message)
+        self.logout_called = False
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.logout()
+
+    def logout(self):
+        from imaplib import IMAP4
+
+        self.logout_called = True
+        raise IMAP4.abort("command: LOGOUT => socket error: EOF")
