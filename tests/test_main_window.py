@@ -92,6 +92,15 @@ def test_build_config_uses_enterprise_wechat_defaults(qtbot):
     assert config.auth_code == "secret"
 
 
+def freeze_today(monkeypatch, year=2026, month=6, day=16):
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(year, month, day)
+
+    monkeypatch.setattr(main_window_module, "date", FixedDate)
+
+
 def test_manual_column_alias_controls_are_not_shown(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -104,26 +113,28 @@ def test_manual_column_alias_controls_are_not_shown(qtbot):
     assert "截至时间别名" not in visible_labels
 
 
-def test_deadline_filter_controls_are_always_visible(qtbot):
+def test_week_filter_controls_are_always_visible(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
 
     assert hasattr(window, "filter_panel")
     assert not window.filter_panel.isHidden()
-    assert [window.filter_combo.itemText(index) for index in range(window.filter_combo.count())] == [
-        "全部",
-        "每日",
-        "每周",
-    ]
+    assert window.previous_week_button.text() == "上周"
+    assert window.current_week_button.text() == "本周"
+    assert window.next_week_button.text() == "下周"
 
 
-def test_table_renders_order_rows(qtbot):
+def test_table_renders_current_week_order_rows(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
 
     window.apply_scan_result(
         ScanResult(
-            rows=[OrderRow(order_number="PO-7007", deadline="2026-11-02")],
+            rows=[
+                OrderRow(order_number="PO-7007", deadline="2026-06-16"),
+                OrderRow(order_number="PO-NEXT", deadline="2026-06-22"),
+            ],
             scanned_messages=1,
             parsed_attachments=1,
         )
@@ -131,19 +142,20 @@ def test_table_renders_order_rows(qtbot):
 
     assert window.table.rowCount() == 1
     assert window.table.item(0, 0).text() == "PO-7007"
-    assert window.table.item(0, 1).text() == "2026-11-02"
+    assert window.table.item(0, 1).text() == "2026-06-16"
     assert "读取 1 条订单" in window.status_label.text()
 
 
-def test_table_sorts_order_rows_by_deadline(qtbot):
+def test_table_sorts_order_rows_by_deadline(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
 
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="PO-LATE", deadline="2026-11-02"),
-                OrderRow(order_number="PO-EARLY", deadline="2026-06-20"),
+                OrderRow(order_number="PO-LATE", deadline="2026-06-21"),
+                OrderRow(order_number="PO-EARLY", deadline="2026-06-15"),
                 OrderRow(order_number="PO-UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -154,11 +166,11 @@ def test_table_sorts_order_rows_by_deadline(qtbot):
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
         "PO-EARLY",
         "PO-LATE",
-        "PO-UNKNOWN",
     ]
 
 
-def test_table_sorts_legacy_deadline_text_formats(qtbot):
+def test_table_sorts_legacy_deadline_text_formats(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
 
@@ -166,7 +178,7 @@ def test_table_sorts_legacy_deadline_text_formats(qtbot):
         ScanResult(
             rows=[
                 OrderRow(order_number="PO-SLASH", deadline="2026/6/20 00:00:00"),
-                OrderRow(order_number="PO-CHINESE", deadline="2026年6月19日 18:30"),
+                OrderRow(order_number="PO-CHINESE", deadline="2026年6月18日 18:30"),
                 OrderRow(order_number="PO-UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -177,25 +189,25 @@ def test_table_sorts_legacy_deadline_text_formats(qtbot):
     assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
         "PO-CHINESE",
         "PO-SLASH",
-        "PO-UNKNOWN",
     ]
 
 
-def test_table_sorts_deadlines_by_date_ascending(qtbot):
+def test_table_sorts_deadlines_by_date_ascending(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
 
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="29914", deadline="2025-05-28"),
-                OrderRow(order_number="29904", deadline="2026-05-26"),
-                OrderRow(order_number="29912", deadline="2026-05-26"),
-                OrderRow(order_number="29905", deadline="2026-05-27"),
-                OrderRow(order_number="29917", deadline="2026-05-28"),
-                OrderRow(order_number="29923", deadline="2026-05-28"),
-                OrderRow(order_number="29988", deadline="2026-06-03"),
-                OrderRow(order_number="29953", deadline="2026-06-05"),
+                OrderRow(order_number="29914", deadline="2026-06-15"),
+                OrderRow(order_number="29904", deadline="2026-06-16"),
+                OrderRow(order_number="29912", deadline="2026-06-16"),
+                OrderRow(order_number="29905", deadline="2026-06-17"),
+                OrderRow(order_number="29917", deadline="2026-06-18"),
+                OrderRow(order_number="29923", deadline="2026-06-18"),
+                OrderRow(order_number="29988", deadline="2026-06-20"),
+                OrderRow(order_number="29953", deadline="2026-06-21"),
             ],
             scanned_messages=1,
             parsed_attachments=1,
@@ -214,13 +226,8 @@ def test_table_sorts_deadlines_by_date_ascending(qtbot):
     ]
 
 
-def test_deadline_filter_shows_today_and_current_week(qtbot, monkeypatch):
-    class FixedDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 6, 16)
-
-    monkeypatch.setattr(main_window_module, "date", FixedDate)
+def test_week_filter_defaults_to_current_week_and_can_switch_weeks(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
 
@@ -231,6 +238,7 @@ def test_deadline_filter_shows_today_and_current_week(qtbot, monkeypatch):
                 OrderRow(order_number="WEEK-END", deadline="2026-06-21"),
                 OrderRow(order_number="TODAY", deadline="2026-06-16"),
                 OrderRow(order_number="WEEK-START", deadline="2026-06-15"),
+                OrderRow(order_number="PREV-WEEK", deadline="2026-06-14"),
                 OrderRow(order_number="UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -242,21 +250,23 @@ def test_deadline_filter_shows_today_and_current_week(qtbot, monkeypatch):
         "WEEK-START",
         "TODAY",
         "WEEK-END",
-        "NEXT-WEEK",
-        "UNKNOWN",
     ]
 
-    window.filter_combo.setCurrentText("每日")
+    assert "2026-06-15" in window.week_label.text()
+    assert "2026-06-21" in window.week_label.text()
 
-    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == ["TODAY"]
+    window.next_week_button.click()
 
-    window.filter_combo.setCurrentText("每周")
+    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == ["NEXT-WEEK"]
+    assert "2026-06-22" in window.week_label.text()
+    assert "2026-06-28" in window.week_label.text()
 
-    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
-        "WEEK-START",
-        "TODAY",
-        "WEEK-END",
-    ]
+    window.current_week_button.click()
+    window.previous_week_button.click()
+
+    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == ["PREV-WEEK"]
+    assert "2026-06-08" in window.week_label.text()
+    assert "2026-06-14" in window.week_label.text()
 
 
 def test_first_scan_sets_baseline_without_order_change_notification(qtbot, monkeypatch):
@@ -278,6 +288,7 @@ def test_first_scan_sets_baseline_without_order_change_notification(qtbot, monke
 
 
 def test_later_scan_notifies_new_and_updated_orders(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
     window = MainWindow()
     qtbot.addWidget(window)
     notifications = []

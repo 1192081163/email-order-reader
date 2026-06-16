@@ -9,7 +9,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -77,6 +76,8 @@ class MainWindow(QMainWindow):
         self.order_rows: list = []
         self.has_scan_baseline = False
         self.highlighted_order_numbers: set[str] = set()
+        self.week_offset = 0
+        self.last_scan_result: ScanResult | None = None
         self.tray_icon: QSystemTrayIcon | None = None
         self.auto_refresh_timer = QTimer(self)
         self.auto_refresh_timer.setInterval(AUTO_REFRESH_INTERVAL_MS)
@@ -134,13 +135,20 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout(self.filter_panel)
         filter_layout.setContentsMargins(14, 8, 14, 8)
         filter_layout.setSpacing(8)
-        filter_label = QLabel("筛选")
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItem("全部", "all")
-        self.filter_combo.addItem("每日", "today")
-        self.filter_combo.addItem("每周", "week")
+        filter_label = QLabel("截止周")
+        self.previous_week_button = QPushButton("上周")
+        self.previous_week_button.setProperty("kind", "secondary")
+        self.current_week_button = QPushButton("本周")
+        self.current_week_button.setProperty("kind", "primary")
+        self.next_week_button = QPushButton("下周")
+        self.next_week_button.setProperty("kind", "secondary")
+        self.week_label = QLabel("")
+        self.week_label.setObjectName("weekLabel")
         filter_layout.addWidget(filter_label)
-        filter_layout.addWidget(self.filter_combo)
+        filter_layout.addWidget(self.previous_week_button)
+        filter_layout.addWidget(self.current_week_button)
+        filter_layout.addWidget(self.next_week_button)
+        filter_layout.addWidget(self.week_label)
         filter_layout.addStretch()
 
         self.table = QTableWidget(0, 2)
@@ -169,12 +177,15 @@ class MainWindow(QMainWindow):
         self.save_settings_button.clicked.connect(self.finish_editing_settings)
         self.refresh_button.clicked.connect(lambda: self.start_scan(full_scan=True))
         self.summary_refresh_button.clicked.connect(lambda: self.start_scan(full_scan=False))
-        self.filter_combo.currentIndexChanged.connect(lambda _index: self.render_order_rows())
+        self.previous_week_button.clicked.connect(self.show_previous_week)
+        self.current_week_button.clicked.connect(self.show_current_week)
+        self.next_week_button.clicked.connect(self.show_next_week)
 
         self.apply_style()
         self.load_saved_settings()
         self._loading_settings = False
         self.ensure_tray_icon()
+        self.update_week_label()
         self.update_settings_visibility()
 
     def required_fields_present(self) -> bool:
@@ -291,13 +302,21 @@ class MainWindow(QMainWindow):
         self.worker = None
 
     def apply_scan_result(self, result: ScanResult) -> None:
+        self.last_scan_result = result
         self.order_rows = _sorted_order_rows(result.rows)
         self.highlighted_order_numbers = self.detect_order_changes(self.order_rows)
-        self.render_order_rows()
-        self.status_label.setText(_format_scan_status(result, auto_refreshing=self.auto_refresh_timer.isActive()))
+        displayed_count = self.render_order_rows()
+        self.status_label.setText(
+            _format_scan_status(
+                result,
+                auto_refreshing=self.auto_refresh_timer.isActive(),
+                displayed_row_count=displayed_count,
+            )
+        )
 
-    def render_order_rows(self) -> None:
-        display_rows = _filter_order_rows(self.order_rows, self.filter_combo.currentData() or "all")
+    def render_order_rows(self) -> int:
+        self.update_week_label()
+        display_rows = _filter_order_rows_for_week(self.order_rows, self.week_offset)
         self.table.setRowCount(0)
         for row in display_rows:
             row_index = self.table.rowCount()
@@ -309,6 +328,34 @@ class MainWindow(QMainWindow):
                 deadline_item.setBackground(HIGHLIGHT_COLOR)
             self.table.setItem(row_index, 0, order_item)
             self.table.setItem(row_index, 1, deadline_item)
+        return len(display_rows)
+
+    def show_previous_week(self) -> None:
+        self.week_offset -= 1
+        self.refresh_week_view()
+
+    def show_current_week(self) -> None:
+        self.week_offset = 0
+        self.refresh_week_view()
+
+    def show_next_week(self) -> None:
+        self.week_offset += 1
+        self.refresh_week_view()
+
+    def refresh_week_view(self) -> None:
+        displayed_count = self.render_order_rows()
+        if self.last_scan_result is not None:
+            self.status_label.setText(
+                _format_scan_status(
+                    self.last_scan_result,
+                    auto_refreshing=self.auto_refresh_timer.isActive(),
+                    displayed_row_count=displayed_count,
+                )
+            )
+
+    def update_week_label(self) -> None:
+        week_start, week_end = _week_range(self.week_offset)
+        self.week_label.setText(f"{week_start.isoformat()} 至 {week_end.isoformat()}")
 
     def apply_scan_error(self, message: str) -> None:
         if "邮箱登录失败" in message:
@@ -465,12 +512,17 @@ class MainWindow(QMainWindow):
         )
 
 
-def _format_scan_status(result: ScanResult, auto_refreshing: bool = False) -> str:
+def _format_scan_status(
+    result: ScanResult,
+    auto_refreshing: bool = False,
+    displayed_row_count: int | None = None,
+) -> str:
     scanned_label = "当前已处理" if result.scan_mode == "incremental" else "扫描到"
+    row_count = result.row_count if displayed_row_count is None else displayed_row_count
     status = (
         f"{scanned_label} {result.scanned_messages} 封邮件，"
         f"找到 {result.parsed_attachments} 个 Excel 附件，"
-        f"读取 {result.row_count} 条订单。"
+        f"读取 {row_count} 条订单。"
     )
 
     details: list[str] = []
@@ -480,6 +532,8 @@ def _format_scan_status(result: ScanResult, auto_refreshing: bool = False) -> st
         details.append("这些邮件里没有找到 .xlsx/.xlsm/.xls 附件")
     elif result.row_count == 0:
         details.append("已找到附件，但没有识别出订单号和截至时间；请检查附件格式是否为支持的订单模板")
+    elif displayed_row_count is not None and displayed_row_count == 0:
+        details.append("当前选择的周没有订单")
 
     details.extend(result.warnings)
     if details:
@@ -503,22 +557,19 @@ def _order_row_sort_key(row) -> tuple:
     return (0, deadline, row.order_number)
 
 
-def _filter_order_rows(rows: list, filter_mode: str) -> list:
-    if filter_mode == "today":
-        today = date.today()
-        return [row for row in rows if _parse_deadline_date(row.deadline) == today]
+def _filter_order_rows_for_week(rows: list, week_offset: int) -> list:
+    week_start, week_end = _week_range(week_offset)
+    return [
+        row
+        for row in rows
+        if (deadline := _parse_deadline_date(row.deadline)) is not None and week_start <= deadline <= week_end
+    ]
 
-    if filter_mode == "week":
-        today = date.today()
-        week_start = today - timedelta(days=today.weekday())
-        week_end = week_start + timedelta(days=6)
-        return [
-            row
-            for row in rows
-            if (deadline := _parse_deadline_date(row.deadline)) is not None and week_start <= deadline <= week_end
-        ]
 
-    return rows
+def _week_range(week_offset: int) -> tuple[date, date]:
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday()) + timedelta(days=week_offset * 7)
+    return week_start, week_start + timedelta(days=6)
 
 
 def _parse_deadline_date(value: str) -> date | None:
