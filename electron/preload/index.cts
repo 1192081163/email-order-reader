@@ -1,12 +1,15 @@
-import { contextBridge, ipcRenderer } from "electron";
+import type { AppSettings, RendererApi, ScanOrdersRequest, UpdateInfo } from "../shared/types.js";
 
-import {
-  IPC_CHANNELS,
-  type AppSettings,
-  type RendererApi,
-  type ScanOrdersRequest,
-  type UpdateInfo,
-} from "../shared/types.js";
+const { contextBridge, ipcRenderer } = require("electron") as typeof import("electron");
+
+const IPC_CHANNELS = {
+  loadSettings: "settings:load",
+  saveSettings: "settings:save",
+  scanOrders: "orders:scan",
+  checkUpdates: "updates:check",
+  downloadUpdate: "updates:download",
+  installUpdate: "updates:install",
+} as const;
 
 const api: RendererApi = {
   loadSettings: () => ipcRenderer.invoke(IPC_CHANNELS.loadSettings),

@@ -12,7 +12,7 @@ function createWindow(): void {
     width: 1100,
     height: 720,
     webPreferences: {
-      preload: path.join(currentDir, "../preload/index.js"),
+      preload: path.join(currentDir, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },

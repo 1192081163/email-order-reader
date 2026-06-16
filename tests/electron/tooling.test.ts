@@ -1,5 +1,11 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 import packageJson from "../../package.json";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("Electron tooling", () => {
   it("defines the Electron development and test commands", () => {
@@ -24,5 +30,13 @@ describe("Electron tooling", () => {
     expect(packageJson.build.appId).toBe("com.orderquickread.desktop");
     expect(packageJson.build.win.icon).toBe("assets/app_icon.ico");
     expect(packageJson.build.mac.icon).toBe("assets/app_icon.icns");
+  });
+
+  it("uses a CommonJS preload entry that Electron can load in packaged apps", () => {
+    const appSource = readFileSync(path.join(repoRoot, "electron/main/app.ts"), "utf-8");
+
+    expect(appSource).toContain("../preload/index.cjs");
+    expect(existsSync(path.join(repoRoot, "electron/preload/index.cts"))).toBe(true);
+    expect(existsSync(path.join(repoRoot, "electron/preload/index.ts"))).toBe(false);
   });
 });

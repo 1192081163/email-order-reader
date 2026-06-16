@@ -8,7 +8,7 @@
   },
   "include": [
     "electron/main/**/*.ts",
-    "electron/preload/**/*.ts",
+    "electron/preload/**/*",
     "electron/shared/**/*.ts"
   ]
 }
