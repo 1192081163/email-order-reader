@@ -1,7 +1,10 @@
+from datetime import date
+
 import pytest
 from PySide6.QtWidgets import QLabel, QSystemTrayIcon
 
 import email_order_reader.settings as settings_module
+import email_order_reader.ui.main_window as main_window_module
 from email_order_reader.models import OrderRow, ScanResult
 from email_order_reader.ui.main_window import DEFAULT_IMAP_PORT, DEFAULT_IMAP_SERVER, MainWindow
 
@@ -162,6 +165,45 @@ def test_table_sorts_legacy_deadline_text_formats(qtbot):
         "PO-CHINESE",
         "PO-SLASH",
         "PO-UNKNOWN",
+    ]
+
+
+def test_table_sorts_overdue_deadlines_by_closest_to_today(qtbot, monkeypatch):
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 16)
+
+    monkeypatch.setattr(main_window_module, "date", FixedDate)
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.apply_scan_result(
+        ScanResult(
+            rows=[
+                OrderRow(order_number="29914", deadline="2025-05-28"),
+                OrderRow(order_number="29904", deadline="2026-05-26"),
+                OrderRow(order_number="29912", deadline="2026-05-26"),
+                OrderRow(order_number="29905", deadline="2026-05-27"),
+                OrderRow(order_number="29917", deadline="2026-05-28"),
+                OrderRow(order_number="29923", deadline="2026-05-28"),
+                OrderRow(order_number="29988", deadline="2026-06-03"),
+                OrderRow(order_number="29953", deadline="2026-06-05"),
+            ],
+            scanned_messages=1,
+            parsed_attachments=1,
+        )
+    )
+
+    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == [
+        "29953",
+        "29988",
+        "29917",
+        "29923",
+        "29905",
+        "29904",
+        "29912",
+        "29914",
     ]
 
 

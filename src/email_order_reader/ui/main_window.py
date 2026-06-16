@@ -467,15 +467,17 @@ def _format_scan_status(result: ScanResult, auto_refreshing: bool = False) -> st
 
 
 def _sorted_order_rows(rows: list) -> list:
-    return sorted(rows, key=_order_row_sort_key)
+    today = date.today()
+    return sorted(rows, key=lambda row: _order_row_sort_key(row, today))
 
 
-def _order_row_sort_key(row) -> tuple:
+def _order_row_sort_key(row, today: date) -> tuple:
     deadline = _parse_deadline_date(row.deadline)
     if deadline is None:
         return (1, datetime.max.date(), row.deadline, row.order_number)
 
-    return (0, deadline, row.order_number)
+    days_from_today = abs((deadline - today).days)
+    return (0, days_from_today, deadline, row.order_number)
 
 
 def _parse_deadline_date(value: str) -> date | None:
