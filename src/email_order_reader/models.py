@@ -10,12 +10,14 @@ class OrderRow:
     deadline: str
     source_file: str = ""
     message_subject: str = ""
+    message_date: datetime | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "order_number", str(self.order_number).strip())
         object.__setattr__(self, "deadline", str(self.deadline).strip())
         object.__setattr__(self, "source_file", str(self.source_file).strip())
         object.__setattr__(self, "message_subject", str(self.message_subject).strip())
+        object.__setattr__(self, "message_date", _normalize_message_date(self.message_date))
 
 
 @dataclass(frozen=True)
@@ -94,3 +96,19 @@ class ImapConfig:
     email: str
     auth_code: str
     port: int = 993
+
+
+def _normalize_message_date(value: object) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
+    return None

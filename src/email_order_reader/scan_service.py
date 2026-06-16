@@ -53,7 +53,7 @@ class OrderScanService:
 
     def _scan_incremental_with_cache(self) -> ScanResult:
         cache = load_order_cache(self.cache_path)
-        if not self._cache_matches_account(cache) or cache.last_uid <= 0:
+        if not self._cache_matches_account(cache) or cache.last_uid <= 0 or _has_legacy_rows_without_message_dates(cache.rows):
             return self._scan_full_with_cache()
 
         batch = self.client.fetch_excel_attachment_batch(since_uid=cache.last_uid)
@@ -85,6 +85,7 @@ class OrderScanService:
                 attachment.content,
                 self.aliases,
                 message_subject=attachment.message_subject,
+                message_date=attachment.message_date,
             )
             rows.extend(parse_result.rows)
             warnings.extend(parse_result.warnings)
@@ -137,3 +138,7 @@ def _merge_order_rows(existing_rows: list[OrderRow], new_rows: list[OrderRow]) -
         merged[row.order_number] = row
 
     return [merged[order_number] for order_number in order_numbers]
+
+
+def _has_legacy_rows_without_message_dates(rows: list[OrderRow]) -> bool:
+    return any(row.message_date is None for row in rows)

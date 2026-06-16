@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -39,7 +39,7 @@ class FakeBatchClient:
         return self.batch
 
 
-def make_attachment(filename="orders.xlsx"):
+def make_attachment(filename="orders.xlsx", message_date=None):
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["订单号", "交单日期"])
@@ -50,11 +50,13 @@ def make_attachment(filename="orders.xlsx"):
         filename=filename,
         content=stream.getvalue(),
         message_subject="供应商订单",
+        message_date=message_date,
     )
 
 
 def test_scan_service_reads_all_orders_by_default():
-    client = FakeClient([make_attachment()], scanned_messages=2)
+    message_date = datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc)
+    client = FakeClient([make_attachment(message_date=message_date)], scanned_messages=2)
     service = OrderScanService(client=client, aliases=ColumnAliases.default())
 
     result = service.scan_orders()
@@ -63,6 +65,7 @@ def test_scan_service_reads_all_orders_by_default():
     assert result.scanned_messages == 2
     assert result.parsed_attachments == 1
     assert [(row.order_number, row.deadline) for row in result.rows] == [("PO-6006", "2026-10-01")]
+    assert result.rows[0].message_date == message_date
     assert result.warnings == []
 
 
@@ -82,9 +85,10 @@ def test_full_scan_writes_order_cache(tmp_path):
     from email_order_reader.models import AttachmentFetchResult
 
     cache_path = tmp_path / "order_cache.json"
+    message_date = datetime(2026, 6, 16, 9, 0, tzinfo=timezone.utc)
     client = FakeBatchClient(
         AttachmentFetchResult(
-            attachments=[make_attachment()],
+            attachments=[make_attachment(message_date=message_date)],
             scanned_messages=4,
             parsed_message_uids=["8"],
             latest_uid=8,
@@ -107,6 +111,7 @@ def test_full_scan_writes_order_cache(tmp_path):
     assert cache.last_uid == 8
     assert cache.uidvalidity == "uid-validity-1"
     assert [(row.order_number, row.deadline) for row in cache.rows] == [("PO-6006", "2026-10-01")]
+    assert cache.rows[0].message_date == message_date
 
 
 def test_incremental_scan_reuses_cached_orders_and_fetches_only_new_uids(tmp_path):
@@ -118,7 +123,13 @@ def test_incremental_scan_reuses_cached_orders_and_fetches_only_new_uids(tmp_pat
             email="buyer@example.com",
             uidvalidity="uid-validity-1",
             last_uid=10,
-            rows=[OrderRow(order_number="PO-OLD", deadline="2026-06-20")],
+            rows=[
+                OrderRow(
+                    order_number="PO-OLD",
+                    deadline="2026-06-20",
+                    message_date=datetime(2026, 6, 15, 8, 0, tzinfo=timezone.utc),
+                )
+            ],
             scanned_messages=10,
             parsed_attachments=3,
         ),
@@ -150,6 +161,40 @@ def test_incremental_scan_reuses_cached_orders_and_fetches_only_new_uids(tmp_pat
         ("PO-6006", "2026-10-01"),
     ]
     assert load_order_cache(cache_path).last_uid == 11
+
+
+def test_incremental_scan_falls_back_to_full_scan_for_legacy_cache_without_message_dates(tmp_path):
+    from email_order_reader.models import AttachmentFetchResult, OrderRow
+
+    cache_path = tmp_path / "order_cache.json"
+    save_order_cache(
+        OrderCache(
+            email="buyer@example.com",
+            uidvalidity="uid-validity-1",
+            last_uid=10,
+            rows=[OrderRow(order_number="PO-OLD", deadline="2026-06-20")],
+        ),
+        cache_path,
+    )
+    client = FakeBatchClient(
+        AttachmentFetchResult(
+            attachments=[make_attachment()],
+            scanned_messages=2,
+            parsed_message_uids=["12"],
+            latest_uid=12,
+            uidvalidity="uid-validity-1",
+        )
+    )
+    service = OrderScanService(
+        client=client,
+        aliases=ColumnAliases.default(),
+        cache_path=cache_path,
+        account_email="buyer@example.com",
+    )
+
+    service.scan_orders(full_scan=False)
+
+    assert client.batch_calls == [(None, None)]
 
 
 def test_incremental_scan_falls_back_to_full_scan_for_different_cached_email(tmp_path):

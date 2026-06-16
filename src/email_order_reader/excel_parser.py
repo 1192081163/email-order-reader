@@ -27,6 +27,7 @@ def parse_excel_attachment(
     content: bytes,
     aliases: ColumnAliases | None = None,
     message_subject: str = "",
+    message_date: datetime | None = None,
 ) -> AttachmentParseResult:
     aliases = aliases or ColumnAliases.default()
 
@@ -35,7 +36,7 @@ def parse_excel_attachment(
     except Exception as exc:
         return AttachmentParseResult(filename=filename, warnings=[f"{filename}：无法读取Excel附件：{exc}"])
 
-    return _parse_sheets(filename, sheets, aliases, message_subject)
+    return _parse_sheets(filename, sheets, aliases, message_subject, message_date)
 
 
 def _read_sheets(filename: str, content: bytes) -> list[SheetRows]:
@@ -95,12 +96,13 @@ def _parse_sheets(
     sheets: Sequence[Sequence[Sequence[object]]],
     aliases: ColumnAliases,
     message_subject: str,
+    message_date: datetime | None,
 ) -> AttachmentParseResult:
     parsed_rows: list[OrderRow] = []
     found_header = False
 
     for rows in sheets:
-        sheet_rows = _parse_rows(filename, rows, aliases, message_subject)
+        sheet_rows = _parse_rows(filename, rows, aliases, message_subject, message_date)
         if sheet_rows is None:
             continue
         found_header = True
@@ -117,8 +119,9 @@ def _parse_rows(
     rows: Sequence[Sequence[object]],
     aliases: ColumnAliases,
     message_subject: str,
+    message_date: datetime | None,
 ) -> list[OrderRow] | None:
-    template_rows = _parse_job_template_rows(filename, rows, message_subject)
+    template_rows = _parse_job_template_rows(filename, rows, message_subject, message_date)
     if template_rows is not None:
         return template_rows
 
@@ -143,6 +146,7 @@ def _parse_rows(
                 deadline=deadline,
                 source_file=filename,
                 message_subject=message_subject,
+                message_date=message_date,
             )
         )
 
@@ -153,6 +157,7 @@ def _parse_job_template_rows(
     filename: str,
     rows: Sequence[Sequence[object]],
     message_subject: str,
+    message_date: datetime | None,
 ) -> list[OrderRow] | None:
     order_number = _find_template_job_number(rows)
     deadline = _find_template_delivery_date(rows)
@@ -165,6 +170,7 @@ def _parse_job_template_rows(
             deadline=deadline,
             source_file=filename,
             message_subject=message_subject,
+            message_date=message_date,
         )
     ]
 

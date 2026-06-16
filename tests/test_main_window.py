@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from PySide6.QtWidgets import QLabel, QMessageBox, QSystemTrayIcon
@@ -102,6 +102,10 @@ def freeze_today(monkeypatch, year=2026, month=6, day=16):
     monkeypatch.setattr(main_window_module, "date", FixedDate)
 
 
+def sent_datetime(day: int) -> datetime:
+    return datetime(2026, 6, day, 9, 0, tzinfo=timezone.utc)
+
+
 def test_manual_column_alias_controls_are_not_shown(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -123,6 +127,8 @@ def test_week_filter_controls_are_always_visible(qtbot):
     assert window.previous_week_button.text() == "上周"
     assert window.current_week_button.text() == "本周"
     assert window.next_week_button.text() == "下周"
+    visible_labels = [label.text() for label in window.findChildren(QLabel) if not label.isHidden()]
+    assert "发送周" in visible_labels
 
 
 def test_table_renders_current_week_order_rows(qtbot, monkeypatch):
@@ -133,8 +139,8 @@ def test_table_renders_current_week_order_rows(qtbot, monkeypatch):
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="PO-7007", deadline="2026-06-16"),
-                OrderRow(order_number="PO-NEXT", deadline="2026-06-22"),
+                OrderRow(order_number="PO-7007", deadline="2026-06-16", message_date=sent_datetime(16)),
+                OrderRow(order_number="PO-NEXT", deadline="2026-06-22", message_date=sent_datetime(22)),
             ],
             scanned_messages=1,
             parsed_attachments=1,
@@ -155,8 +161,8 @@ def test_table_sorts_order_rows_by_deadline(qtbot, monkeypatch):
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="PO-LATE", deadline="2026-06-21"),
-                OrderRow(order_number="PO-EARLY", deadline="2026-06-15"),
+                OrderRow(order_number="PO-LATE", deadline="2026-06-21", message_date=sent_datetime(16)),
+                OrderRow(order_number="PO-EARLY", deadline="2026-06-15", message_date=sent_datetime(16)),
                 OrderRow(order_number="PO-UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -178,8 +184,8 @@ def test_table_sorts_legacy_deadline_text_formats(qtbot, monkeypatch):
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="PO-SLASH", deadline="2026/6/20 00:00:00"),
-                OrderRow(order_number="PO-CHINESE", deadline="2026年6月18日 18:30"),
+                OrderRow(order_number="PO-SLASH", deadline="2026/6/20 00:00:00", message_date=sent_datetime(16)),
+                OrderRow(order_number="PO-CHINESE", deadline="2026年6月18日 18:30", message_date=sent_datetime(16)),
                 OrderRow(order_number="PO-UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -201,14 +207,14 @@ def test_table_sorts_deadlines_by_date_ascending(qtbot, monkeypatch):
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="29914", deadline="2026-06-15"),
-                OrderRow(order_number="29904", deadline="2026-06-16"),
-                OrderRow(order_number="29912", deadline="2026-06-16"),
-                OrderRow(order_number="29905", deadline="2026-06-17"),
-                OrderRow(order_number="29917", deadline="2026-06-18"),
-                OrderRow(order_number="29923", deadline="2026-06-18"),
-                OrderRow(order_number="29988", deadline="2026-06-20"),
-                OrderRow(order_number="29953", deadline="2026-06-21"),
+                OrderRow(order_number="29914", deadline="2026-06-15", message_date=sent_datetime(16)),
+                OrderRow(order_number="29904", deadline="2026-06-16", message_date=sent_datetime(16)),
+                OrderRow(order_number="29912", deadline="2026-06-16", message_date=sent_datetime(16)),
+                OrderRow(order_number="29905", deadline="2026-06-17", message_date=sent_datetime(16)),
+                OrderRow(order_number="29917", deadline="2026-06-18", message_date=sent_datetime(16)),
+                OrderRow(order_number="29923", deadline="2026-06-18", message_date=sent_datetime(16)),
+                OrderRow(order_number="29988", deadline="2026-06-20", message_date=sent_datetime(16)),
+                OrderRow(order_number="29953", deadline="2026-06-21", message_date=sent_datetime(16)),
             ],
             scanned_messages=1,
             parsed_attachments=1,
@@ -235,11 +241,11 @@ def test_week_filter_defaults_to_current_week_and_can_switch_weeks(qtbot, monkey
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="NEXT-WEEK", deadline="2026-06-22"),
-                OrderRow(order_number="WEEK-END", deadline="2026-06-21"),
-                OrderRow(order_number="TODAY", deadline="2026-06-16"),
-                OrderRow(order_number="WEEK-START", deadline="2026-06-15"),
-                OrderRow(order_number="PREV-WEEK", deadline="2026-06-14"),
+                OrderRow(order_number="NEXT-WEEK", deadline="2026-06-22", message_date=sent_datetime(22)),
+                OrderRow(order_number="WEEK-END", deadline="2026-06-21", message_date=sent_datetime(21)),
+                OrderRow(order_number="TODAY", deadline="2026-06-16", message_date=sent_datetime(16)),
+                OrderRow(order_number="WEEK-START", deadline="2026-06-15", message_date=sent_datetime(15)),
+                OrderRow(order_number="PREV-WEEK", deadline="2026-06-14", message_date=sent_datetime(14)),
                 OrderRow(order_number="UNKNOWN", deadline="待确认"),
             ],
             scanned_messages=1,
@@ -270,6 +276,25 @@ def test_week_filter_defaults_to_current_week_and_can_switch_weeks(qtbot, monkey
     assert "2026-06-14" in window.week_label.text()
 
 
+def test_week_filter_uses_email_sent_time_instead_of_deadline(qtbot, monkeypatch):
+    freeze_today(monkeypatch)
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.apply_scan_result(
+        ScanResult(
+            rows=[
+                OrderRow(order_number="SENT-THIS-WEEK", deadline="2026-07-10", message_date=sent_datetime(16)),
+                OrderRow(order_number="DEADLINE-THIS-WEEK", deadline="2026-06-16", message_date=sent_datetime(22)),
+            ],
+            scanned_messages=2,
+            parsed_attachments=2,
+        )
+    )
+
+    assert [window.table.item(row, 0).text() for row in range(window.table.rowCount())] == ["SENT-THIS-WEEK"]
+
+
 def test_first_scan_sets_baseline_without_order_change_notification(qtbot, monkeypatch):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -278,7 +303,7 @@ def test_first_scan_sets_baseline_without_order_change_notification(qtbot, monke
 
     window.apply_scan_result(
         ScanResult(
-            rows=[OrderRow(order_number="PO-1001", deadline="2026-06-20")],
+            rows=[OrderRow(order_number="PO-1001", deadline="2026-06-20", message_date=sent_datetime(16))],
             scanned_messages=1,
             parsed_attachments=1,
         )
@@ -296,7 +321,7 @@ def test_later_scan_notifies_new_and_updated_orders(qtbot, monkeypatch):
     monkeypatch.setattr(window, "notify_order_changes", lambda new_count, updated_count: notifications.append((new_count, updated_count)))
     window.apply_scan_result(
         ScanResult(
-            rows=[OrderRow(order_number="PO-1001", deadline="2026-06-20")],
+            rows=[OrderRow(order_number="PO-1001", deadline="2026-06-20", message_date=sent_datetime(16))],
             scanned_messages=1,
             parsed_attachments=1,
         )
@@ -305,8 +330,8 @@ def test_later_scan_notifies_new_and_updated_orders(qtbot, monkeypatch):
     window.apply_scan_result(
         ScanResult(
             rows=[
-                OrderRow(order_number="PO-1001", deadline="2026-06-21"),
-                OrderRow(order_number="PO-2002", deadline="2026-06-19"),
+                OrderRow(order_number="PO-1001", deadline="2026-06-21", message_date=sent_datetime(16)),
+                OrderRow(order_number="PO-2002", deadline="2026-06-19", message_date=sent_datetime(16)),
             ],
             scanned_messages=1,
             parsed_attachments=1,

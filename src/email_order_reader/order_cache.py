@@ -76,6 +76,7 @@ def _load_rows(raw_rows: object) -> list[OrderRow]:
                 deadline=deadline,
                 source_file=str(raw_row.get("source_file") or ""),
                 message_subject=str(raw_row.get("message_subject") or ""),
+                message_date=str(raw_row.get("message_date") or ""),
             )
         )
     return rows
@@ -87,6 +88,7 @@ def _dump_row(row: OrderRow) -> dict[str, str]:
         "deadline": row.deadline,
         "source_file": row.source_file,
         "message_subject": row.message_subject,
+        "message_date": row.message_date.isoformat() if row.message_date is not None else "",
     }
 
 

@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout(self.filter_panel)
         filter_layout.setContentsMargins(14, 8, 14, 8)
         filter_layout.setSpacing(8)
-        filter_label = QLabel("截止周")
+        filter_label = QLabel("发送周")
         self.previous_week_button = QPushButton("上周")
         self.previous_week_button.setProperty("kind", "secondary")
         self.current_week_button = QPushButton("本周")
@@ -693,7 +693,7 @@ def _filter_order_rows_for_week(rows: list, week_offset: int) -> list:
     return [
         row
         for row in rows
-        if (deadline := _parse_deadline_date(row.deadline)) is not None and week_start <= deadline <= week_end
+        if (sent_date := _order_row_sent_date(row)) is not None and week_start <= sent_date <= week_end
     ]
 
 
@@ -701,6 +701,26 @@ def _week_range(week_offset: int) -> tuple[date, date]:
     today = date.today()
     week_start = today - timedelta(days=today.weekday()) + timedelta(days=week_offset * 7)
     return week_start, week_start + timedelta(days=6)
+
+
+def _order_row_sent_date(row) -> date | None:
+    message_date = getattr(row, "message_date", None)
+    if message_date is None:
+        return None
+
+    if isinstance(message_date, datetime):
+        return message_date.date()
+
+    if isinstance(message_date, date):
+        return message_date
+
+    if isinstance(message_date, str):
+        try:
+            return datetime.fromisoformat(message_date.strip()).date()
+        except ValueError:
+            return None
+
+    return None
 
 
 def _parse_deadline_date(value: str) -> date | None:
