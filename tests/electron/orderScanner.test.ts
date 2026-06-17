@@ -45,6 +45,7 @@ const mailMocks = vi.hoisted(() => {
     connectError: null as Error | null,
     simpleParser: vi.fn(),
     downloads: new Map<string, Buffer>(),
+    beforeDownloadMany: null as null | ((range: string, parts: string[]) => Promise<void>),
     ImapFlow: vi.fn((options: unknown) => {
       const release = vi.fn();
       const client: MockClient = {
@@ -55,11 +56,12 @@ const mailMocks = vi.hoisted(() => {
         }),
         getMailboxLock: vi.fn(async () => ({ release })),
         fetch: vi.fn(() => makeMessageIterator(state.messages)),
-        downloadMany: vi.fn(async (range: string, parts: string[]) =>
-          Object.fromEntries(
+        downloadMany: vi.fn(async (range: string, parts: string[]) => {
+          await state.beforeDownloadMany?.(range, parts);
+          return Object.fromEntries(
             parts.map((part) => [part, { meta: {}, content: state.downloads.get(`${range}:${part}`) ?? null }]),
-          ),
-        ),
+          );
+        }),
         logout: vi.fn(async () => undefined),
         mailbox: { uidValidity: state.uidValidity, uidNext: state.uidNext },
       };
@@ -95,6 +97,7 @@ beforeEach(async () => {
   mailMocks.uidNext = 10;
   mailMocks.connectError = null;
   mailMocks.downloads = new Map();
+  mailMocks.beforeDownloadMany = null;
   mailMocks.simpleParser.mockReset();
   mailMocks.ImapFlow.mockClear();
 });
@@ -467,6 +470,8 @@ describe("IMAP attachment client", () => {
     expect(mailMocks.clients[0].client.downloadMany).toHaveBeenCalledWith("9", ["1", "2"], { uid: true });
     expect(mailMocks.simpleParser).not.toHaveBeenCalled();
     expect(mailMocks.clients[0].release).toHaveBeenCalledTimes(1);
+    expect(mailMocks.clients[0].client.logout).not.toHaveBeenCalled();
+    await client.close();
     expect(mailMocks.clients[0].client.logout).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       attachments: [
@@ -529,6 +534,92 @@ describe("IMAP attachment client", () => {
       latestUid: 9,
       uidvalidity: "123",
     });
+  });
+
+  it("reuses the IMAP connection across repeated refreshes", async () => {
+    mailMocks.uidNext = 10;
+
+    const { ImapAttachmentClient } = await import("../../electron/main/services/mailClient");
+    const client = new ImapAttachmentClient({
+      email: "buyer@example.com",
+      authCode: "secret",
+      host: "imap.example.com",
+    });
+
+    await client.fetchExcelAttachmentBatch({ sinceUid: 9 });
+    await client.fetchExcelAttachmentBatch({ sinceUid: 9 });
+
+    expect(mailMocks.ImapFlow).toHaveBeenCalledTimes(1);
+    expect(mailMocks.clients[0].client.connect).toHaveBeenCalledTimes(1);
+    expect(mailMocks.clients[0].client.logout).not.toHaveBeenCalled();
+
+    await client.close();
+
+    expect(mailMocks.clients[0].client.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts attachment downloads from multiple messages concurrently", async () => {
+    mailMocks.uidNext = 12;
+    mailMocks.messages = [
+      {
+        uid: 7,
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            {
+              part: "2",
+              type: "application/octet-stream",
+              disposition: "attachment",
+              dispositionParameters: { filename: "first.xlsx" },
+            },
+          ],
+        },
+        envelope: { subject: "first", date: new Date("2026-06-16T08:00:00.000Z") },
+      },
+      {
+        uid: 8,
+        bodyStructure: {
+          type: "multipart/mixed",
+          childNodes: [
+            {
+              part: "2",
+              type: "application/octet-stream",
+              disposition: "attachment",
+              dispositionParameters: { filename: "second.xlsx" },
+            },
+          ],
+        },
+        envelope: { subject: "second", date: new Date("2026-06-16T09:00:00.000Z") },
+      },
+    ];
+    mailMocks.downloads.set("7:2", Buffer.from("first"));
+    mailMocks.downloads.set("8:2", Buffer.from("second"));
+    const startedDownloads: string[] = [];
+    let releaseFirstDownload: () => void = () => undefined;
+    mailMocks.beforeDownloadMany = async (range) => {
+      startedDownloads.push(range);
+      if (range === "7") {
+        await new Promise<void>((resolve) => {
+          releaseFirstDownload = resolve;
+        });
+      }
+    };
+
+    const { ImapAttachmentClient } = await import("../../electron/main/services/mailClient");
+    const client = new ImapAttachmentClient({
+      email: "buyer@example.com",
+      authCode: "secret",
+      host: "imap.example.com",
+    });
+
+    const scanPromise = client.fetchExcelAttachmentBatch({ sinceUid: 6 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const downloadsStartedBeforeFirstFinished = [...startedDownloads];
+    releaseFirstDownload();
+    const result = await scanPromise;
+
+    expect(downloadsStartedBeforeFirstFinished).toEqual(["7", "8"]);
+    expect(result.attachments.map((item) => item.filename)).toEqual(["first.xlsx", "second.xlsx"]);
   });
 
   it("formats Enterprise WeChat login failures in Chinese", async () => {

@@ -1,6 +1,7 @@
 import { ImapFlow, type ImapFlowOptions, type MessageStructureObject } from "imapflow";
 
 const SUPPORTED_EXCEL_EXTENSION = /\.(xlsx|xlsm|xls)$/i;
+const MAX_ATTACHMENT_DOWNLOADS = 3;
 
 export const ENTERPRISE_WECHAT_IMAP_HOST = "imap.exmail.qq.com";
 
@@ -33,6 +34,7 @@ export type AttachmentFetchOptions = {
 
 export type AttachmentClient = {
   fetchExcelAttachmentBatch(options: AttachmentFetchOptions): Promise<AttachmentBatch>;
+  close?(): Promise<void>;
 };
 
 type SelectedMailbox = {
@@ -45,21 +47,26 @@ type ExcelBodyPart = {
   filename: string;
 };
 
+type AttachmentDownloadJob = {
+  uid: number;
+  excelParts: ExcelBodyPart[];
+  messageSubject: string;
+  messageDate: string;
+};
+
 export class ImapAttachmentClient implements AttachmentClient {
+  private client: ImapFlow | null = null;
+  private connecting: Promise<ImapFlow> | null = null;
+
   constructor(private readonly config: ImapConfig) {}
 
   async fetchExcelAttachmentBatch(options: AttachmentFetchOptions): Promise<AttachmentBatch> {
-    const client = new ImapFlow(this.createClientOptions());
+    const client = await this.connectedClient();
     const attachments: EmailAttachment[] = [];
+    const downloadJobs: AttachmentDownloadJob[] = [];
     let scannedMessages = 0;
     let latestUid = options.sinceUid ?? 0;
     let uidvalidity = "";
-
-    try {
-      await client.connect();
-    } catch (error) {
-      throw new Error(formatLoginError(error));
-    }
 
     try {
       const lock = await client.getMailboxLock("INBOX");
@@ -87,37 +94,66 @@ export class ImapAttachmentClient implements AttachmentClient {
             continue;
           }
 
-          const downloads = await client.downloadMany(
-            String(message.uid),
-            excelParts.map((part) => part.part),
-            { uid: true },
-          );
           const messageSubject = message.envelope?.subject ?? "";
           const messageDate = messageDateFromHeaders(message.headers, message.envelope?.date ?? message.internalDate);
+          downloadJobs.push({
+            uid: message.uid,
+            excelParts,
+            messageSubject,
+            messageDate,
+          });
+        }
 
-          for (const excelPart of excelParts) {
-            const content = downloads[excelPart.part]?.content;
-            if (!content) {
-              continue;
-            }
-
-            attachments.push({
-              filename: excelPart.filename,
-              content,
-              messageSubject,
-              messageDate,
-              messageUid: message.uid,
-            });
-          }
+        const downloadedAttachments = await mapWithConcurrency(
+          downloadJobs,
+          MAX_ATTACHMENT_DOWNLOADS,
+          async (job) => downloadExcelAttachments(client, job),
+        );
+        for (const attachmentGroup of downloadedAttachments) {
+          attachments.push(...attachmentGroup);
         }
       } finally {
         lock.release();
       }
-    } finally {
-      await client.logout().catch(() => undefined);
+    } catch (error) {
+      await this.close();
+      throw error;
     }
 
     return { attachments, scannedMessages, latestUid, uidvalidity };
+  }
+
+  async close(): Promise<void> {
+    const client = this.client;
+    this.client = null;
+    this.connecting = null;
+    await client?.logout().catch(() => undefined);
+  }
+
+  private async connectedClient(): Promise<ImapFlow> {
+    if (this.client) {
+      return this.client;
+    }
+    if (this.connecting) {
+      return this.connecting;
+    }
+
+    const client = new ImapFlow(this.createClientOptions());
+    this.connecting = client
+      .connect()
+      .then(() => {
+        this.client = client;
+        return client;
+      })
+      .catch((error: unknown) => {
+        this.client = null;
+        throw new Error(formatLoginError(error));
+      })
+      .finally(() => {
+        this.connecting = null;
+      });
+
+    return this.connecting;
   }
 
   private createClientOptions(): ImapFlowOptions {
@@ -156,6 +192,58 @@ function collectExcelBodyParts(structure: MessageStructureObject | undefined): E
   const parts: ExcelBodyPart[] = [];
   collectExcelBodyPartsInto(structure, parts);
   return parts;
+}
+
+async function downloadExcelAttachments(client: ImapFlow, job: AttachmentDownloadJob): Promise<EmailAttachment[]> {
+  const downloads = await client.downloadMany(
+    String(job.uid),
+    job.excelParts.map((part) => part.part),
+    { uid: true },
+  );
+  const attachments: EmailAttachment[] = [];
+
+  for (const excelPart of job.excelParts) {
+    const content = downloads[excelPart.part]?.content;
+    if (!content) {
+      continue;
+    }
+
+    attachments.push({
+      filename: excelPart.filename,
+      content,
+      messageSubject: job.messageSubject,
+      messageDate: job.messageDate,
+      messageUid: job.uid,
+    });
+  }
+
+  return attachments;
+}
+
+async function mapWithConcurrency<TInput, TResult>(
+  items: TInput[],
+  concurrency: number,
+  mapper: (item: TInput) => Promise<TResult>,
+): Promise<TResult[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<TResult>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(items[index]);
+      }
+    }),
+  );
+
+  return results;
 }
 
 function collectExcelBodyPartsInto(node: MessageStructureObject, parts: ExcelBodyPart[]): void {

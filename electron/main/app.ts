@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { app, BrowserWindow } from "electron";
 
-import { registerIpcHandlers } from "./ipc.js";
+import { closeMailboxClients, registerIpcHandlers } from "./ipc.js";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,4 +43,8 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  void closeMailboxClients();
 });

@@ -9,11 +9,20 @@ import {
   type UpdateInfo,
 } from "../shared/types.js";
 import { ImapAttachmentClient } from "./services/mailClient.js";
+import { MailboxClientCache } from "./services/mailClientCache.js";
 import { countOrderChanges, notifyOrderChanges } from "./services/notifier.js";
 import { loadOrderCache } from "./services/orderCache.js";
 import { scanOrders } from "./services/orderScanner.js";
 import { loadSettings, saveSettings } from "./services/settingsStore.js";
 import { checkForElectronUpdate, downloadUpdateAsset } from "./services/updater.js";
+
+const mailboxClients = new MailboxClientCache(
+  (email, authCode) =>
+    new ImapAttachmentClient({
+      email,
+      authCode,
+    }),
+);
 
 function appDataPath(filename: string): string {
   return join(app.getPath("userData"), filename);
@@ -53,6 +62,10 @@ export function registerIpcHandlers(): void {
   });
 }
 
+export async function closeMailboxClients(): Promise<void> {
+  await mailboxClients.close();
+}
+
 async function loadStoredSettings(): Promise<AppSettings> {
   return loadSettings({
     settingsPath: appDataPath("settings.json"),
@@ -68,11 +81,9 @@ async function scanStoredMailbox(options: ScanOrdersRequest): Promise<ScanResult
 
   const cachePath = appDataPath("order_cache.json");
   const previousCache = await loadOrderCache(cachePath);
+  const client = mailboxClients.get(settings);
   const result = await scanOrders({
-    client: new ImapAttachmentClient({
-      email: settings.email,
-      authCode: settings.authCode,
-    }),
+    client,
     fullScan: options.fullScan,
     cachePath,
     accountEmail: settings.email,
