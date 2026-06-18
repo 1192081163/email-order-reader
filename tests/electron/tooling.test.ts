@@ -15,8 +15,35 @@ describe("Electron tooling", () => {
       "electron:dev":
         'npm run electron:build:main && concurrently -k "vite --host 127.0.0.1" "wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron dist-electron/main/app.js"',
       "electron:test": "vitest run",
-      "electron:build": "vite build && npm run electron:build:main && electron-builder",
+      "electron:build": "npm run electron:clean && npm run electron:build:app && electron-builder",
       "electron:typecheck": "tsc --noEmit",
+    });
+  });
+
+  it("separates fast packaging from release packaging", () => {
+    expect(packageJson.scripts).toMatchObject({
+      "electron:clean": "node scripts/clean_electron_outputs.mjs",
+      "electron:build:app": "vite build && npm run electron:build:main",
+      "electron:pack": "npm run electron:clean && npm run electron:build:app && electron-builder --dir --publish never",
+      "electron:dist": "npm run electron:clean && npm run electron:build:app && electron-builder --publish never",
+      "electron:build": "npm run electron:clean && npm run electron:build:app && electron-builder",
+    });
+  });
+
+  it("keeps renderer-only packages out of production dependencies", () => {
+    expect(packageJson.dependencies).toMatchObject({
+      imapflow: expect.any(String),
+      xlsx: expect.any(String),
+    });
+    expect(packageJson.dependencies).not.toHaveProperty("react");
+    expect(packageJson.dependencies).not.toHaveProperty("react-dom");
+    expect(packageJson.dependencies).not.toHaveProperty("@fluentui/react-components");
+    expect(packageJson.dependencies).not.toHaveProperty("@fluentui/react-datepicker-compat");
+    expect(packageJson.devDependencies).toMatchObject({
+      react: expect.any(String),
+      "react-dom": expect.any(String),
+      "@fluentui/react-components": expect.any(String),
+      "@fluentui/react-datepicker-compat": expect.any(String),
     });
   });
 
