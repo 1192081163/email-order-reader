@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 
 import type { OrderRow, ScanOrdersRequest, ScanResult } from "../../shared/types.js";
-import { loadOrderCache, mergeOrderRows, saveOrderCache } from "./orderCache.js";
+import {
+  loadOrderCache,
+  mergeOrderRows,
+  mergeParsedAttachmentCache,
+  saveOrderCache,
+} from "./orderCache.js";
+import type { ParsedAttachmentCacheEntry } from "./orderCache.js";
 
 export type RemoteEmailApiConfig = {
   baseUrl: string;
@@ -67,6 +73,8 @@ const PO_NUMBER_INDEX = 1;
 const D_DATE_INDEX = 0;
 const IDEAL_D_DATE_INDEX = 14;
 const ESTIMATE_C_DATE_INDEX = 15;
+const REMOTE_EXTRACT_BATCH_SIZE = 5;
+const REMOTE_EXTRACT_CACHE_PREFIX = "remote-email-api:";
 
 export function defaultRemoteEmailApiConfigPaths(resourcesPath?: string): string[] {
   return [
@@ -168,17 +176,21 @@ export async function scanRemoteOrders(options: ScanRemoteOrdersOptions): Promis
     };
   }
 
-  const extraction = await options.client.extractMessages(
-    candidateMessages.map((message) => message.uid),
+  const cachedExtractions = findCachedExtractions(cache.parsedAttachmentCache ?? [], candidateMessages);
+  const extraction = await extractUncachedMessages(
+    options.client,
+    cachedExtractions.uncachedMessages,
     days * 24,
   );
-  const rows = mapExtractedRows(extraction.extraction.rows, candidateMessages);
+  const rows = [...cachedExtractions.rows, ...extraction.rows];
   const mergedRows = options.request.fullScan ? rows : mergeOrderRows(cache.rows, rows);
-  const warnings = [
-    ...extraction.extraction.failures.map((failure) => `${path.basename(failure.path)}：${failure.error}`),
-    ...extraction.extraction.skippedFiles.map((filePath) => `${path.basename(filePath)}：未识别为订单文件`),
-  ];
+  const warnings = [...cachedExtractions.warnings, ...extraction.warnings];
   const latestUid = Math.max(cache.lastUid, ...candidateMessages.map((message) => numericUid(message.uid)));
+  const parsedAttachments = cachedExtractions.parsedAttachments + extraction.parsedAttachments;
+  const parsedAttachmentCache = mergeParsedAttachmentCache(
+    cache.parsedAttachmentCache ?? [],
+    extraction.cacheEntries,
+  );
 
   await saveOrderCache(options.cachePath, {
     email: options.accountEmail,
@@ -187,14 +199,15 @@ export async function scanRemoteOrders(options: ScanRemoteOrdersOptions): Promis
     rows: mergedRows,
     warnings,
     scannedMessages: listResult.scannedMessages,
-    parsedAttachments: extraction.emailFetch.attachmentCount,
+    parsedAttachments,
+    parsedAttachmentCache,
   });
 
   return {
     rows: mergedRows,
     warnings,
     scannedMessages: listResult.scannedMessages,
-    parsedAttachments: extraction.emailFetch.attachmentCount,
+    parsedAttachments,
     scanMode: options.request.fullScan ? "full" : "incremental",
   };
 }
@@ -209,39 +222,156 @@ function shouldExtractMessage(message: EmailMessageSummary, request: ScanOrdersR
   return request.fullScan || numericUid(message.uid) > lastUid;
 }
 
-function mapExtractedRows(rows: ExtractedOrderRow[], messages: EmailMessageSummary[]): OrderRow[] {
-  const firstMessage = messages[0];
-  return rows
-    .map((row) => {
-      const orderNumber = valueText(row.values[PO_NUMBER_INDEX]);
-      const deadline =
-        valueText(row.values[IDEAL_D_DATE_INDEX]) ||
-        valueText(row.values[D_DATE_INDEX]) ||
-        valueText(row.values[ESTIMATE_C_DATE_INDEX]);
-      if (!orderNumber || !deadline) {
-        return undefined;
-      }
+function findCachedExtractions(
+  cacheEntries: ParsedAttachmentCacheEntry[],
+  messages: EmailMessageSummary[],
+): {
+  rows: OrderRow[];
+  warnings: string[];
+  parsedAttachments: number;
+  uncachedMessages: EmailMessageSummary[];
+} {
+  const entriesByKey = new Map(cacheEntries.map((entry) => [entry.key, entry]));
+  const rows: OrderRow[] = [];
+  const warnings: string[] = [];
+  const uncachedMessages: EmailMessageSummary[] = [];
 
-      return {
-        orderNumber,
-        deadline,
-        sourceFile: path.basename(row.sourceFile),
-        messageSubject: firstMessage?.subject ?? "",
-        messageDate: firstMessage?.date ?? "",
-      };
-    })
-    .filter((row): row is OrderRow => row !== undefined);
+  for (const message of messages) {
+    const cached = entriesByKey.get(remoteExtractionCacheKey(message.uid));
+    if (!cached) {
+      uncachedMessages.push(message);
+      continue;
+    }
+
+    rows.push(...cached.rows);
+    warnings.push(...cached.warnings);
+  }
+
+  return {
+    rows,
+    warnings,
+    parsedAttachments: rows.length,
+    uncachedMessages,
+  };
+}
+
+async function extractUncachedMessages(
+  client: RemoteEmailApiClient,
+  messages: EmailMessageSummary[],
+  hours: number,
+): Promise<{
+  rows: OrderRow[];
+  warnings: string[];
+  parsedAttachments: number;
+  cacheEntries: ParsedAttachmentCacheEntry[];
+}> {
+  const rows: OrderRow[] = [];
+  const warnings: string[] = [];
+  const cacheEntries: ParsedAttachmentCacheEntry[] = [];
+  let parsedAttachments = 0;
+
+  for (const batch of chunkArray(messages, REMOTE_EXTRACT_BATCH_SIZE)) {
+    const messageUids = batch.map((message) => message.uid);
+
+    try {
+      const extraction = await client.extractMessages(messageUids, hours);
+      const rowsByUid = mapExtractedRowsByUid(extraction.extraction.rows, batch);
+      parsedAttachments += extraction.emailFetch.attachmentCount;
+      warnings.push(
+        ...extraction.extraction.failures.map((failure) => `${path.basename(failure.path)}：${failure.error}`),
+        ...extraction.extraction.skippedFiles.map((filePath) => `${path.basename(filePath)}：未识别为订单文件`),
+      );
+
+      for (const message of batch) {
+        const messageRows = rowsByUid.get(message.uid) ?? [];
+        rows.push(...messageRows);
+        if (messageRows.length > 0) {
+          cacheEntries.push({
+            key: remoteExtractionCacheKey(message.uid),
+            rows: messageRows,
+            warnings: [],
+          });
+        }
+      }
+    } catch (error) {
+      warnings.push(`远端邮件服务提取失败 UID ${messageUids.join(", ")}：${errorMessage(error)}`);
+    }
+  }
+
+  return { rows, warnings, parsedAttachments, cacheEntries };
+}
+
+function mapExtractedRowsByUid(rows: ExtractedOrderRow[], messages: EmailMessageSummary[]): Map<string, OrderRow[]> {
+  const mappedRows = new Map<string, OrderRow[]>();
+
+  for (const [index, row] of rows.entries()) {
+    const message = messageForExtractedRow(row, messages, index);
+    const orderRow = mapExtractedRow(row, message);
+    if (!message || !orderRow) {
+      continue;
+    }
+
+    const messageRows = mappedRows.get(message.uid) ?? [];
+    messageRows.push(orderRow);
+    mappedRows.set(message.uid, messageRows);
+  }
+
+  return mappedRows;
+}
+
+function mapExtractedRow(row: ExtractedOrderRow, message: EmailMessageSummary | undefined): OrderRow | undefined {
+  const orderNumber = valueText(row.values[PO_NUMBER_INDEX]);
+  const deadline =
+    valueText(row.values[IDEAL_D_DATE_INDEX]) ||
+    valueText(row.values[D_DATE_INDEX]) ||
+    valueText(row.values[ESTIMATE_C_DATE_INDEX]);
+  if (!orderNumber || !deadline) {
+    return undefined;
+  }
+
+  return {
+    orderNumber,
+    deadline,
+    sourceFile: path.basename(row.sourceFile),
+    messageSubject: message?.subject ?? "",
+    messageDate: message?.date ?? "",
+  };
+}
+
+function messageForExtractedRow(
+  row: ExtractedOrderRow,
+  messages: EmailMessageSummary[],
+  rowIndex: number,
+): EmailMessageSummary | undefined {
+  const sourceFile = path.basename(row.sourceFile);
+  return messages.find((message) => sourceFile.includes(message.uid)) ?? messages[rowIndex] ?? messages[0];
+}
+
+function remoteExtractionCacheKey(uid: string): string {
+  return `${REMOTE_EXTRACT_CACHE_PREFIX}${uid}`;
+}
+
+function chunkArray<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function scanDays(request: ScanOrdersRequest, now: Date): number {
-  const startDate = earliestDate(request.sentStartDate, request.backgroundSentStartDate);
+  const startDate = request.sentStartDate;
   if (!startDate) {
-    return request.fullScan ? 30 : 7;
+    return 7;
   }
 
   const start = localDateStart(startDate);
   if (!start) {
-    return request.fullScan ? 30 : 7;
+    return 7;
   }
 
   return Math.max(1, Math.ceil((localDateStart(localIsoDate(now))!.getTime() - start.getTime()) / MS_PER_DAY) + 1);
@@ -258,10 +388,6 @@ function isMessageInDateRange(message: EmailMessageSummary, request: ScanOrdersR
   const start = request.sentStartDate ? localDateStart(request.sentStartDate) : undefined;
   const end = request.sentEndDate ? localDateStart(request.sentEndDate) : undefined;
   return (!start || messageDate >= start) && (!end || messageDate <= end);
-}
-
-function earliestDate(...dates: Array<string | undefined>): string | undefined {
-  return dates.filter(Boolean).sort()[0];
 }
 
 function localIsoDate(date: Date): string {
