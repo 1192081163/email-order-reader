@@ -58,7 +58,7 @@ function statusFromError(error: unknown): string {
 }
 
 function scanStatus(result: ScanResult, scopeLabel = ""): string {
-  const prefix = scopeLabel ? `按${scopeLabel}扫描，匹配` : "扫描到";
+  const prefix = scopeLabel ? `按${scopeLabel}读取，匹配` : "读取到";
   return `${prefix} ${result.scannedMessages} 封邮件，找到 ${result.parsedAttachments} 个 Excel 附件，读取 ${result.rows.length} 条订单。${metricsStatus(result)}`;
 }
 
@@ -187,12 +187,12 @@ export function App() {
       setSettings(loadedSettings);
       if (hasCompleteSettings(loadedSettings)) {
         setEditingSettings(false);
-        setStatus(loadedSettings.remoteEmailApi?.configured ? "已加载远端邮件服务。" : "已加载保存的邮箱。");
+        setStatus(loadedSettings.remoteEmailApi?.configured ? "已连接远端邮件服务。" : "已加载邮件读取设置。");
         return;
       }
 
       setEditingSettings(true);
-      setStatus("请填写邮箱和授权码，或配置远端邮件服务。");
+      setStatus("请填写本地邮箱授权码，或配置远端邮件服务。");
       } catch (error) {
         if (isMounted) {
           setStatus(statusFromError(error));
@@ -266,13 +266,13 @@ export function App() {
 
     if (settings.remoteEmailApi?.configured && !settings.authCode) {
       setEditingSettings(false);
-      setStatus("已使用远端邮件服务。");
+      setStatus("已连接远端邮件服务。");
       return true;
     }
 
     if (!hasCompleteSettings(nextSettings)) {
       setEditingSettings(true);
-      setStatus("请填写邮箱和授权码，或配置远端邮件服务。");
+      setStatus("请填写本地邮箱授权码，或配置远端邮件服务。");
       return false;
     }
 
@@ -287,7 +287,7 @@ export function App() {
       await api.saveSettings(nextSettings);
       setSettings(nextSettings);
       setEditingSettings(false);
-      setStatus("已保存邮箱设置。");
+      setStatus("已保存邮件读取设置。");
       return true;
     } catch (error) {
       setStatus(statusFromError(error));
@@ -304,7 +304,7 @@ export function App() {
 
     if (!hasCompleteSettings(settings)) {
       setEditingSettings(true);
-      setStatus("请填写邮箱和授权码，或配置远端邮件服务。");
+      setStatus("请填写本地邮箱授权码，或配置远端邮件服务。");
       return false;
     }
 
@@ -327,10 +327,10 @@ export function App() {
       const scopeLabel = fullScan ? scanScopeLabel(scanRequest) : "";
       setStatus(
         fullScan
-          ? `正在扫描${scopeLabel || "全部"}邮件...`
+          ? `正在读取${scopeLabel || "全部"}邮件...`
           : options.auto
-            ? "自动刷新新邮件..."
-            : "正在刷新新邮件...",
+            ? "自动读取最新邮件..."
+            : "正在读取最新邮件...",
       );
       const api = rendererApi();
       if (!api) {
@@ -351,7 +351,7 @@ export function App() {
   async function clearCache() {
     try {
       setIsBusy(true);
-      setStatus("正在清空本地扫描缓存...");
+      setStatus("正在清空本地读取缓存...");
       const api = rendererApi();
       if (!api) {
         setStatus("桌面接口尚未连接。请在 Electron 应用中打开。");
@@ -360,7 +360,7 @@ export function App() {
 
       await api.clearCache();
       setRows([]);
-      setStatus("已清空本地扫描缓存。");
+      setStatus("已清空本地读取缓存。");
     } catch (error) {
       setStatus(statusFromError(error));
     } finally {

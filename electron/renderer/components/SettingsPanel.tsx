@@ -12,12 +12,12 @@ type Props = {
 
 export function SettingsPanel({ disabled, settings, onChange, onSave, onScanAll }: Props) {
   return (
-    <section className="panel settings-panel" role="region" aria-label="邮箱设置">
+    <section className="panel settings-panel" role="region" aria-label="邮件读取设置">
       <div className="panel-title">
         <Title3 as="h1">订单快读</Title3>
       </div>
       <div className="settings-fields">
-        <Field label="邮箱">
+        <Field label="邮箱账号">
           <Input
             autoComplete="username"
             disabled={disabled}
@@ -25,7 +25,7 @@ export function SettingsPanel({ disabled, settings, onChange, onSave, onScanAll 
             onChange={(_event, data) => onChange({ ...settings, email: data.value })}
           />
         </Field>
-        <Field label="授权码">
+        <Field label="邮箱授权码">
           <Input
             autoComplete="current-password"
             disabled={disabled}
@@ -37,10 +37,10 @@ export function SettingsPanel({ disabled, settings, onChange, onSave, onScanAll 
       </div>
       <div className="button-row">
         <Button disabled={disabled} onClick={onSave}>
-          保存设置
+          保存读取设置
         </Button>
         <Button appearance="primary" disabled={disabled} onClick={onScanAll}>
-          同步近一个月
+          读取近一周
         </Button>
       </div>
     </section>

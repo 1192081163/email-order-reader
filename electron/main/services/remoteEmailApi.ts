@@ -295,6 +295,7 @@ async function extractUncachedMessages(
       }
     } catch (error) {
       warnings.push(`远端邮件服务提取失败 UID ${messageUids.join(", ")}：${errorMessage(error)}`);
+      break;
     }
   }
 

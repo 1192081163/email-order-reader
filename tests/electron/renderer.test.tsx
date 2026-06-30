@@ -78,13 +78,13 @@ describe("Electron renderer", () => {
 
     expect(await screen.findByText("远端邮件服务")).toBeInTheDocument();
     expect(screen.queryByLabelText("邮箱")).not.toBeInTheDocument();
-    expect(await screen.findByText("已加载远端邮件服务。")).toBeInTheDocument();
+    expect(await screen.findByText("已连接远端邮件服务。")).toBeInTheDocument();
   });
 
   it("does not show the enterprise mailbox subtitle in settings", async () => {
     render(<App />);
 
-    expect(await screen.findByRole("region", { name: "邮箱设置" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "邮件读取设置" })).toBeInTheDocument();
     expect(screen.queryByText("企业微信邮箱")).not.toBeInTheDocument();
   });
 
@@ -94,7 +94,7 @@ describe("Electron renderer", () => {
     const { container } = render(<App />);
 
     expect(await screen.findByRole("main", { name: "订单快读" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "邮箱工具栏" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "订单读取工具栏" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "订单筛选" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "订单列表" })).toBeInTheDocument();
     expect(container.querySelector(".date-filter-group")).toBeInTheDocument();
@@ -122,17 +122,17 @@ describe("Electron renderer", () => {
     render(<App />);
     await screen.findByText("saved@example.com");
 
-    expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "同步近一个月" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新最新" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "读取近一周" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "清空缓存" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "检查更新" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "修改邮箱设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "修改读取设置" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
 
     expect(await screen.findByRole("menuitem", { name: "清空缓存" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "检查更新" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "修改邮箱设置" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "修改读取设置" })).toBeInTheDocument();
   });
 
   it("keeps more actions inline with the toolbar when opened", async () => {
@@ -143,7 +143,7 @@ describe("Electron renderer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
 
-    const toolbar = screen.getByRole("region", { name: "邮箱工具栏" });
+    const toolbar = screen.getByRole("region", { name: "订单读取工具栏" });
     expect(toolbar).toContainElement(await screen.findByRole("menu"));
     expect(screen.getByRole("main", { name: "订单快读" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "订单筛选" })).toBeInTheDocument();
@@ -152,9 +152,9 @@ describe("Electron renderer", () => {
   it("shows running status as a transient popup instead of a persistent bar", () => {
     vi.useFakeTimers();
 
-    render(<StatusBar status="已加载保存的邮箱。" />);
+    render(<StatusBar status="已加载邮件读取设置。" />);
 
-    expect(screen.getByRole("status", { name: "运行状态" })).toHaveTextContent("已加载保存的邮箱。");
+    expect(screen.getByRole("status", { name: "运行状态" })).toHaveTextContent("已加载邮件读取设置。");
 
     act(() => {
       vi.advanceTimersByTime(4_000);
@@ -172,7 +172,7 @@ describe("Electron renderer", () => {
 
     await screen.findByText("saved@example.com");
 
-    fireEvent.click(screen.getByRole("button", { name: "同步近一个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取近一周" }));
     await waitFor(() =>
       expect(api.scanOrders).toHaveBeenCalledWith({
         fullScan: true,
@@ -184,9 +184,9 @@ describe("Electron renderer", () => {
         backgroundSentEndDate: "2026-06-17",
       }),
     );
-    expect(await screen.findByText("按近一周扫描，匹配 0 封邮件，找到 0 个 Excel 附件，读取 0 条订单。")).toBeInTheDocument();
+    expect(await screen.findByText("按近一周读取，匹配 0 封邮件，找到 0 个 Excel 附件，读取 0 条订单。")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    fireEvent.click(screen.getByRole("button", { name: "刷新最新" }));
     await waitFor(() => expect(api.scanOrders).toHaveBeenLastCalledWith({ fullScan: false, includeMetrics: true }));
   });
 
@@ -212,11 +212,11 @@ describe("Electron renderer", () => {
 
     render(<App />);
     await screen.findByText("saved@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "同步近一个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取近一周" }));
 
     expect(
       await screen.findByText(
-        "按近一周扫描，匹配 1 封邮件，找到 1 个 Excel 附件，读取 0 条订单。耗时 1.2 秒，缓存命中 2 个，重试 1 次。",
+        "按近一周读取，匹配 1 封邮件，找到 1 个 Excel 附件，读取 0 条订单。耗时 1.2 秒，缓存命中 2 个，重试 1 次。",
       ),
     ).toBeInTheDocument();
   });
@@ -269,7 +269,7 @@ describe("Electron renderer", () => {
     render(<App />);
     await screen.findByText("saved@example.com");
 
-    fireEvent.click(screen.getByRole("button", { name: "同步近一个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取近一周" }));
     await screen.findByText("TODAY-SENT-TODAY-DUE");
 
     fireEvent.change(screen.getByLabelText("发送时间"), { target: { value: "2026-06-16" } });
@@ -290,7 +290,7 @@ describe("Electron renderer", () => {
     await screen.findByText("saved@example.com");
     fireEvent.change(screen.getByLabelText("发送时间"), { target: { value: "2026-06-18" } });
     fireEvent.blur(screen.getByLabelText("发送时间"));
-    fireEvent.click(screen.getByRole("button", { name: "同步近一个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取近一周" }));
 
     await waitFor(() =>
       expect(api.scanOrders).toHaveBeenCalledWith({
@@ -322,7 +322,7 @@ describe("Electron renderer", () => {
 
     render(<App />);
     await screen.findByText("saved@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "同步近一个月" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取近一周" }));
 
     expect(await screen.findByText("PO-SENT")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "发送时间" })).toBeInTheDocument();
@@ -337,7 +337,7 @@ describe("Electron renderer", () => {
     await clickMoreMenuItem("清空缓存");
 
     await waitFor(() => expect(api.clearCache).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("已清空本地扫描缓存。")).toBeInTheDocument();
+    expect(await screen.findByText("已清空本地读取缓存。")).toBeInTheDocument();
   });
 
   it("opens calendar pickers directly from sent and deadline date filters", async () => {
@@ -363,15 +363,15 @@ describe("Electron renderer", () => {
 
     render(<App />);
 
-    await clickMoreMenuItem("修改邮箱设置");
-    fireEvent.change(screen.getByLabelText("邮箱"), { target: { value: "edited@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    await clickMoreMenuItem("修改读取设置");
+    fireEvent.change(screen.getByLabelText("邮箱账号"), { target: { value: "edited@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存读取设置" }));
 
     await waitFor(() =>
       expect(api.saveSettings).toHaveBeenCalledWith({ email: "edited@example.com", authCode: "secret" }),
     );
     expect(await screen.findByText("edited@example.com")).toBeInTheDocument();
-    expect(screen.queryByLabelText("邮箱")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("邮箱账号")).not.toBeInTheDocument();
   });
 
   it("shows API errors as status text without crashing", async () => {
@@ -380,7 +380,7 @@ describe("Electron renderer", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "刷新" }));
+    fireEvent.click(await screen.findByRole("button", { name: "刷新最新" }));
 
     expect(await screen.findByText("IMAP 登录失败")).toBeInTheDocument();
     expect(screen.getByText("saved@example.com")).toBeInTheDocument();
@@ -406,7 +406,7 @@ describe("Electron renderer", () => {
     });
 
     expect(api.scanOrders).toHaveBeenCalledWith({ fullScan: false, includeMetrics: true });
-    expect(screen.getByText("扫描到 0 封邮件，找到 0 个 Excel 附件，读取 0 条订单。")).toBeInTheDocument();
+    expect(screen.getByText("读取到 0 封邮件，找到 0 个 Excel 附件，读取 0 条订单。")).toBeInTheDocument();
   });
 
   it("checks for updates on startup without blocking saved settings", async () => {

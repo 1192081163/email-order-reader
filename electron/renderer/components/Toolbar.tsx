@@ -53,22 +53,22 @@ export function Toolbar({ disabled, email, onRefresh, onScanAll, onClearCache, o
   }
 
   return (
-    <section className="panel toolbar" role="region" aria-label="邮箱工具栏">
+    <section className="panel toolbar" role="region" aria-label="订单读取工具栏">
       <div className="toolbar-title">
         <Title3 as="h1">订单快读</Title3>
         <div className="account-line">
           <Badge appearance="tint" color="brand">
-            已连接
+          读取服务
           </Badge>
           <Text className="account-email">{email}</Text>
         </div>
       </div>
       <div className="toolbar-actions">
         <Button appearance="primary" disabled={disabled} onClick={onRefresh}>
-          刷新
+        刷新最新
         </Button>
         <Button disabled={disabled} onClick={onScanAll}>
-          同步近一个月
+        读取近一周
         </Button>
         <div className="toolbar-more" ref={moreMenuRef}>
           <Button
@@ -88,7 +88,7 @@ export function Toolbar({ disabled, email, onRefresh, onScanAll, onClearCache, o
                 检查更新
               </Button>
               <Button appearance="subtle" className="toolbar-more-item" role="menuitem" onClick={() => runMoreAction(onEditSettings)}>
-                修改邮箱设置
+            修改读取设置
               </Button>
             </div>
           ) : null}

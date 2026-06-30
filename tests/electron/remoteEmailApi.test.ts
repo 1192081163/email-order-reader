@@ -249,6 +249,61 @@ describe("remote email API client", () => {
     expect(result.warnings).toContain("远端邮件服务提取失败 UID 106：TLS disconnected");
   });
 
+  it("stops remaining remote extraction batches after a service failure", async () => {
+    const cachePath = path.join(tempDir, "order_cache.json");
+    const messages = ["101", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111"].map((uid) =>
+      message(uid),
+    );
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/api/email/messages")) {
+        return new Response(JSON.stringify(listPayload(messages)), { status: 200 });
+      }
+      if (url.endsWith("/api/email/extract")) {
+        const body = JSON.parse(String(init?.body));
+        if (body.messageUids.includes("106")) {
+          return new Response(JSON.stringify({ error: "TLS disconnected" }), { status: 500 });
+        }
+        return new Response(
+          JSON.stringify({
+            emailFetch: {
+              files: body.messageUids.map((uid: string) => `/server/${uid}.xlsx`),
+              scannedMessages: body.messageUids.length,
+              attachmentCount: body.messageUids.length,
+              downloadDir: "/server",
+            },
+            extraction: {
+              inputFiles: body.messageUids.map((uid: string) => `/server/${uid}.xlsx`),
+              rows: body.messageUids.map((uid: string) =>
+                extractionRow(extractionValues(`PO-${uid}`, "2026-07-05"), `/server/${uid}.xlsx`),
+              ),
+              skippedFiles: [],
+              failures: [],
+              outputs: { outputDir: "", csvOutput: "", xlsxOutput: "", auditOutput: "" },
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await scanRemoteOrders({
+      client: new RemoteEmailApiClient({ baseUrl: "https://api.example" }),
+      request: { fullScan: true, sentStartDate: "2026-06-12", sentEndDate: "2026-06-18" },
+      cachePath,
+      accountEmail: "remote@example.com",
+      now: () => new Date("2026-06-18T12:00:00.000Z"),
+    });
+
+    const extractCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/email/extract"));
+    expect(extractCalls).toHaveLength(2);
+    expect(JSON.parse(String(extractCalls[0][1]?.body)).messageUids).toEqual(["101", "102", "103", "104", "105"]);
+    expect(JSON.parse(String(extractCalls[1][1]?.body)).messageUids).toEqual(["106", "107", "108", "109", "110"]);
+    expect(result.rows.map((row) => row.orderNumber)).toEqual(["PO-101", "PO-102", "PO-103", "PO-104", "PO-105"]);
+    expect(result.warnings).toContain("远端邮件服务提取失败 UID 106, 107, 108, 109, 110：TLS disconnected");
+  });
+
   it("reuses cached remote extraction results by UID", async () => {
     const cachePath = path.join(tempDir, "order_cache.json");
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
